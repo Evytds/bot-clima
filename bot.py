@@ -3,12 +3,12 @@ import json
 from datetime import datetime
 
 def run_simulation():
-    # ID EXTRAÍDO DE TU LINK
+    # ID directo de tu link
     EVENT_ID = "1760165563991" 
     
-    print(f"--- 🎯 EJECUCIÓN DIRECTA POR ID: {datetime.now()} ---")
+    print(f"--- 🚀 EXTRACCIÓN PROFUNDA DE DATOS: {datetime.now()} ---")
     
-    # 1. CLIMA (Satélite)
+    # 1. CLIMA (CIENCIA)
     prob_real = 0
     try:
         r_weather = requests.get(
@@ -21,48 +21,56 @@ def run_simulation():
             }
         )
         prob_real = r_weather.json()['daily']['precipitation_probability_max'][0]
-        print(f"🌦️ Probabilidad Satélite (18 Ene): {prob_real}%")
+        print(f"🌦️ Probabilidad Satélite: {prob_real}%")
     except:
         print("❌ Error clima")
 
-    # 2. MERCADO (Conexión Directa)
+    # 2. MERCADO (Búsqueda Exhaustiva de Precio)
     precio_mercado = 0
     try:
-        # Consultamos el ID directamente, sin usar buscadores
         url = f"https://gamma-api.polymarket.com/events/{EVENT_ID}"
         r = requests.get(url)
         data = r.json()
         
-        titulo = data.get('title', 'Mercado de Lluvia NYC')
         markets = data.get('markets', [])
-        
         if markets:
-            # Obtenemos el precio del 'YES'
-            prices = json.loads(markets[0].get('outcomePrices', '["0", "0"]'))
-            precio_mercado = float(prices[0]) * 100
-            print(f"✅ MERCADO DETECTADO: {titulo}")
-            print(f"💰 Precio actual del 'YES': {precio_mercado}%")
+            m = markets[0]
+            # Intentamos 3 formas de obtener el precio si una falla
+            raw_prices = m.get('outcomePrices')
+            last_price = m.get('lastTradePrice')
+            best_bid = m.get('bestBid')
+            
+            if raw_prices and raw_prices != 'null':
+                precio_mercado = float(json.loads(raw_prices)[0]) * 100
+            elif last_price:
+                precio_mercado = float(last_price) * 100
+            elif best_bid:
+                precio_mercado = float(best_bid) * 100
+                
+            print(f"✅ MERCADO: {data.get('title')}")
+            print(f"💰 Precio Detectado: {precio_mercado}%")
         else:
-            print("⚠️ El mercado existe pero no tiene precios aún.")
+            print("⚠️ No se encontraron mercados dentro del evento.")
 
     except Exception as e:
-        print(f"❌ Error al conectar con Polymarket ID: {e}")
+        print(f"❌ Error de conexión: {e}")
 
-    # 3. RESULTADO DE LA ESTRATEGIA
+    # 3. LÓGICA DE RENTABILIDAD
     if prob_real > 0 and precio_mercado > 0:
         ventaja = prob_real - precio_mercado
         print("\n" + "="*40)
-        print(f"🔍 VENTAJA (EDGE): {ventaja:.2f}%")
+        print(f"🔍 ANÁLISIS DE VENTAJA: {ventaja:.2f}%")
         
         if ventaja > 10:
-            print("🚀 SEÑAL: COMPRARÍA 'YES' (Muy barato)")
+            print("🚀 SEÑAL: ¡GANANCIA PROBABLE! El mercado está muy barato.")
+            print(f"Hubieras comprado a {precio_mercado}% algo que tiene {prob_real}% de éxito.")
         elif ventaja < -10:
-            print("📉 SEÑAL: NO COMPRAR / VENDER 'YES' (Muy caro)")
+            print("📉 SEÑAL: EVITAR. El mercado está muy caro.")
         else:
-            print("⚖️ SEÑAL: ESPERAR (Precio justo)")
+            print("⚖️ SEÑAL: PRECIO EQUILIBRADO.")
         print("="*40 + "\n")
     else:
-        print("\n⚠️ No se pudo calcular la ventaja por falta de datos del mercado.")
+        print("\n⚠️ Datos insuficientes para calcular rentabilidad.")
 
 if __name__ == "__main__":
     run_simulation()
