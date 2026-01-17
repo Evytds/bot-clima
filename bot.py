@@ -1,37 +1,54 @@
 import requests
 import json
 from datetime import datetime
+import os
 
 def run_bot():
-    print("--- 🎯 BUSCANDO MERCADO DE LLUVIA (MODO AGRESIVO) ---")
+    print(f"--- 🤖 BOT VIGILANTE: {datetime.now()} ---")
     
-    # Vamos a probar palabras clave específicas de los mercados de clima
-    palabras_clave = ["Rain NYC", "Precipitation", "Central Park"]
-    encontrado = False
+    # 1. OBTENER CLIMA (Siempre funciona)
+    rain_mm = 0
+    try:
+        r = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={"latitude": 40.78, "longitude": -73.97, "daily": "precipitation_sum", "timezone": "America/New_York"}
+        )
+        rain_mm = r.json()['daily']['precipitation_sum'][0]
+        print(f"🌦️ Pronóstico Lluvia NY: {rain_mm} mm")
+    except:
+        print("⚠️ Error leyendo clima")
 
-    for busqueda in palabras_clave:
-        print(f"\n🔎 Probando búsqueda: '{busqueda}'...")
+    # 2. BUSCAR MERCADO (Intento Universal)
+    market_name = "No encontrado hoy"
+    price_yes = 0.0
+    found = False
+    
+    try:
+        # Buscamos 'New York' general para ver si aparece algo de clima
+        r = requests.get("https://gamma-api.polymarket.com/events", params={"q": "New York", "closed": "false", "limit": 50})
+        events = r.json()
         
-        try:
-            url = "https://gamma-api.polymarket.com/events"
-            # Limit 20 es suficiente si la búsqueda es precisa
-            r = requests.get(url, params={"q": busqueda, "closed": "false", "limit": 20})
-            events = r.json()
-            
-            for event in events:
-                title = event.get('title', '')
-                
-                # Filtramos: Solo imprimimos si parece de clima
-                if "Rain" in title or "Precipitation" in title or "inches" in title:
-                    print(f"✅ ¡ENCONTRADO!: 👉 {title}")
-                    encontrado = True
-                    
-        except Exception as e:
-            print(f"❌ Error conectando: {e}")
+        for event in events:
+            title = event.get('title', '')
+            # Buscamos palabras clave de clima dentro de los resultados de NY
+            if "Rain" in title or "Precipitation" in title or "snow" in title:
+                markets = event.get('markets', [])
+                if markets:
+                    prices = json.loads(markets[0].get('outcomePrices', '["0", "0"]'))
+                    price_yes = prices[0]
+                    market_name = title
+                    found = True
+                    print(f"🎯 ¡MERCADO DETECTADO!: {market_name} | Precio: {price_yes}")
+                    break
+    except Exception as e:
+        print(f"❌ Error API: {e}")
 
-    if not encontrado:
-        print("\n⚠️ Sigue sin salir. Es posible que hoy no hayan abierto el mercado todavía.")
-        print("Intenta buscar manualmente en polymarket.com 'Rain NYC' para ver si existe.")
+    # 3. GUARDAR DATOS (Solo si encontró mercado o si quieres loguear clima igual)
+    # Formato CSV simple para que se guarde en el registro
+    print(f"CSV_LOG,{datetime.now()},{market_name},{price_yes},{rain_mm}")
+
+    if not found:
+        print("💤 No hay mercado de lluvia activo en este momento. Reintentando en 1 hora...")
 
 if __name__ == "__main__":
     run_bot()
