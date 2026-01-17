@@ -3,80 +3,79 @@ import json
 import re
 from datetime import datetime
 
-def extraer_datos_mercado(texto):
-    # Extrae todos los números (rango o temperatura única)
-    nums = re.findall(r'\d+', texto)
-    return [int(n) for n in nums]
-
 def run_simulation():
-    print(f"--- 📡 ESCÁNER DE TEMPERATURAS GLOBAL: {datetime.now()} ---")
+    print(f"--- 🛰️ MOTOR DE TRADING CLIMÁTICO (ACTIVE SCAN): {datetime.now()} ---")
     
-    # Base de datos ampliada (las que opera tu 'pro')
-    ciudades = {
-        "Seoul": {"lat": 37.56, "lon": 126.97},
-        "Atlanta": {"lat": 33.74, "lon": -84.38},
-        "Buenos Aires": {"lat": -34.60, "lon": -58.38},
-        "New York": {"lat": 40.71, "lon": -74.00},
-        "Seattle": {"lat": 47.60, "lon": -122.33},
-        "Toronto": {"lat": 43.65, "lon": -79.38}
-    }
-
+    # 1. ESCANEO DE ALTA PRECISIÓN (Events Endpoint)
+    # Buscamos eventos activos (no cerrados) con un límite amplio
+    url_poly = "https://gamma-api.polymarket.com/events?closed=false&limit=200&order=id&ascending=false"
+    
     try:
-        # 1. ESCANEO TOTAL (Sin depender del buscador de Poly)
-        url = "https://gamma-api.polymarket.com/markets?active=true&limit=100&order=volume&dir=desc"
-        mercados = requests.get(url).json()
-        print(f"🔎 Revisando {len(mercados)} mercados activos...")
+        r = requests.get(url_poly)
+        eventos = r.json()
+        print(f"🔎 Analizando {len(eventos)} eventos en vivo...")
 
         encontrados = 0
-        for m in mercados:
-            titulo = m.get('question', '')
-            # Buscamos mercados de temperatura máxima
+        for ev in eventos:
+            titulo = ev.get('title', '')
+            
+            # Filtro Maestro: Buscamos "Highest temperature"
             if "highest temperature" in titulo.lower():
                 encontrados += 1
-                for ciudad, coords in ciudades.items():
-                    if ciudad.lower() in titulo.lower():
-                        # 2. OBTENER CLIMA (Detectar si es °F o °C por el título)
-                        unidad = "fahrenheit" if "°F" in titulo or "Fahrenheit" in titulo else "celsius"
-                        
-                        res = requests.get(
-                            "https://api.open-meteo.com/v1/forecast",
-                            params={
-                                "latitude": coords['lat'], "longitude": coords['lon'],
-                                "daily": "temperature_2m_max", "temperature_unit": unidad,
-                                "timezone": "auto", "forecast_days": 1
-                            }
-                        ).json()
-                        
-                        temp_real = res['daily']['temperature_2m_max'][0]
-                        rango = extraer_datos_mercado(titulo)
-                        
-                        # Extraer precio del YES
+                
+                # Extraemos Ciudad y Fecha del título
+                # Ejemplo: "Highest temperature in Seoul on January 18?"
+                ciudad = "Desconocida"
+                if "Seoul" in titulo: ciudad = "Seoul"
+                elif "Atlanta" in titulo: ciudad = "Atlanta"
+                elif "NYC" in titulo or "New York" in titulo: ciudad = "New York City"
+                elif "Buenos Aires" in titulo: ciudad = "Buenos Aires"
+
+                # Si es una de nuestras ciudades, analizamos
+                if ciudad != "Desconocida":
+                    # Obtenemos Coordenadas
+                    coords = {"Seoul": [37.56, 126.97], "Atlanta": [33.74, -84.38], "New York City": [40.71, -74.00], "Buenos Aires": [-34.60, -58.38]}
+                    lat, lon = coords[ciudad]
+                    
+                    # 2. CONSULTA AL SATÉLITE (Open-Meteo)
+                    unidad = "fahrenheit" if "°F" in titulo else "celsius"
+                    res_weather = requests.get(
+                        "https://api.open-meteo.com/v1/forecast",
+                        params={"latitude": lat, "longitude": lon, "daily": "temperature_2m_max", "temperature_unit": unidad, "timezone": "auto", "forecast_days": 2}
+                    ).json()
+                    
+                    # Tomamos el pronóstico para mañana (Índice 1)
+                    temp_real = res_weather['daily']['temperature_2m_max'][1]
+                    
+                    print(f"\n🎯 MERCADO: {titulo}")
+                    print(f"🌡️ Pronóstico Científico: {temp_real}°{'F' if unidad == 'fahrenheit' else 'C'}")
+
+                    # 3. EXTRAER PRECIOS DE CADA RANGO (Markets dentro del Evento)
+                    for m in ev.get('markets', []):
+                        nombre_opcion = m.get('groupItemTitle', 'Única')
                         precios = json.loads(m.get('outcomePrices', '["0", "0"]'))
                         precio_yes = float(precios[0]) * 100
+                        
+                        # Extraer números del rango (ej: "38-39" -> [38, 39])
+                        numeros = [int(n) for n in re.findall(r'\d+', nombre_opcion)]
+                        
+                        # Lógica de decisión
+                        es_ganadora = False
+                        if len(numeros) == 2:
+                            es_ganadora = numeros[0] <= temp_real <= numeros[1]
+                        elif len(numeros) == 1:
+                            es_ganadora = round(temp_real) == numeros[0]
 
-                        # 3. LÓGICA DE ACIERTO
-                        dentro_del_rango = False
-                        if len(rango) >= 2: # Ej: 38-39
-                            dentro_del_rango = rango[0] <= temp_real <= rango[1]
-                        elif len(rango) == 1: # Ej: 3°C
-                            dentro_del_rango = round(temp_real) == rango[0]
+                        if es_ganadora and precio_yes < 35:
+                            print(f"   🔥 COMPRARÍA 'YES' en [{nombre_opcion}] a {precio_yes}% (GANANCIA PROBABLE)")
+                        elif not es_ganadora and precio_yes > 70:
+                            print(f"   🛡️ COMPRARÍA 'NO' en [{nombre_opcion}] a {100-precio_yes}% (COBERTURA)")
 
-                        print(f"\n📍 {ciudad} | {titulo}")
-                        print(f"🌡️ Pronóstico: {temp_real}°{'F' if unidad == 'fahrenheit' else 'C'}")
-                        print(f"💰 Precio 'YES': {precio_yes}%")
-
-                        if dentro_del_rango and precio_yes < 40:
-                            print("🚀 SEÑAL: ¡VENTAJA DETECTADA! Compraría YES.")
-                        elif not dentro_del_rango and precio_yes > 60:
-                            print("📉 SEÑAL: ¡VENTAJA DETECTADA! Compraría NO.")
-                        else:
-                            print("⚖️ SEÑAL: Esperar mejor precio.")
-        
         if encontrados == 0:
-            print("📭 No se encontraron mercados de temperatura en este momento.")
+            print("📭 Polymarket no tiene mercados de temperatura listados en los últimos 200 eventos.")
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Error crítico: {e}")
 
 if __name__ == "__main__":
     run_simulation()
