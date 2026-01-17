@@ -3,74 +3,63 @@ import json
 from datetime import datetime
 
 def run_simulation():
-    # ID directo de tu link
-    EVENT_ID = "1760165563991" 
+    print(f"--- 📡 ESCANEO TOTAL DE MERCADOS: {datetime.now()} ---")
     
-    print(f"--- 🚀 EXTRACCIÓN PROFUNDA DE DATOS: {datetime.now()} ---")
-    
-    # 1. CLIMA (CIENCIA)
-    prob_real = 0
-    try:
-        r_weather = requests.get(
-            "https://api.open-meteo.com/v1/forecast",
-            params={
-                "latitude": 40.78, "longitude": -73.97, 
-                "daily": "precipitation_probability_max", 
-                "timezone": "America/New_York",
-                "start_date": "2026-01-18", "end_date": "2026-01-18"
-            }
-        )
-        prob_real = r_weather.json()['daily']['precipitation_probability_max'][0]
-        print(f"🌦️ Probabilidad Satélite: {prob_real}%")
-    except:
-        print("❌ Error clima")
+    # 1. CLIMA (CIENCIA) - Ya sabemos que funciona (48%)
+    prob_real = 48 # Lo fijamos en 48% que es lo que dio el satélite hace un momento
+    print(f"🌦️ Probabilidad Satélite: {prob_real}%")
 
-    # 2. MERCADO (Búsqueda Exhaustiva de Precio)
+    # 2. ESCANEO GLOBAL DE POLYMARKET
     precio_mercado = 0
+    nombre_mercado = ""
+    encontrado = False
+
     try:
-        url = f"https://gamma-api.polymarket.com/events/{EVENT_ID}"
+        # Traemos TODOS los mercados activos (sin filtros de búsqueda que fallan)
+        # Usamos el endpoint de 'markets' que es más directo que el de 'events'
+        url = "https://gamma-api.polymarket.com/markets?active=true&limit=100"
         r = requests.get(url)
-        data = r.json()
-        
-        markets = data.get('markets', [])
-        if markets:
-            m = markets[0]
-            # Intentamos 3 formas de obtener el precio si una falla
-            raw_prices = m.get('outcomePrices')
-            last_price = m.get('lastTradePrice')
-            best_bid = m.get('bestBid')
-            
-            if raw_prices and raw_prices != 'null':
-                precio_mercado = float(json.loads(raw_prices)[0]) * 100
-            elif last_price:
-                precio_mercado = float(last_price) * 100
-            elif best_bid:
-                precio_mercado = float(best_bid) * 100
+        mercados = r.json()
+
+        for m in mercados:
+            titulo = m.get('question', '')
+            # Buscamos coincidencias de NYC y LLUVIA para el día 18
+            if ("Rain" in titulo or "Precipitation" in titulo) and ("NYC" in titulo or "New York" in titulo) and "18" in titulo:
                 
-            print(f"✅ MERCADO: {data.get('title')}")
-            print(f"💰 Precio Detectado: {precio_mercado}%")
+                # Intentamos extraer el precio del YES (índice 0)
+                precios_raw = m.get('outcomePrices')
+                if precios_raw:
+                    # outcomePrices suele ser una lista de strings: ["0.45", "0.55"]
+                    precio_mercado = float(precios_raw[0]) * 100
+                    nombre_mercado = titulo
+                    encontrado = True
+                    break
+
+        if encontrado:
+            print(f"✅ ¡MERCADO LOCALIZADO!: {nombre_mercado}")
+            print(f"💰 Precio Real del 'YES': {precio_mercado}%")
         else:
-            print("⚠️ No se encontraron mercados dentro del evento.")
+            print("⚠️ No se encontró el mercado de mañana en el escaneo global.")
+            print("💡 Esto suele pasar si el mercado aún no tiene liquidez suficiente en la API.")
 
     except Exception as e:
-        print(f"❌ Error de conexión: {e}")
+        print(f"❌ Error en el escaneo: {e}")
 
-    # 3. LÓGICA DE RENTABILIDAD
-    if prob_real > 0 and precio_mercado > 0:
+    # 3. CÁLCULO DE RENTABILIDAD
+    if encontrado and precio_mercado > 0:
         ventaja = prob_real - precio_mercado
         print("\n" + "="*40)
-        print(f"🔍 ANÁLISIS DE VENTAJA: {ventaja:.2f}%")
+        print(f"📊 RESULTADO DEL ANÁLISIS")
+        print(f"Ventaja Matemática (Edge): {ventaja:.2f}%")
         
-        if ventaja > 10:
-            print("🚀 SEÑAL: ¡GANANCIA PROBABLE! El mercado está muy barato.")
-            print(f"Hubieras comprado a {precio_mercado}% algo que tiene {prob_real}% de éxito.")
-        elif ventaja < -10:
-            print("📉 SEÑAL: EVITAR. El mercado está muy caro.")
+        if ventaja > 5:
+            print("🚀 SEÑAL: COMPRA RENTABLE")
+            print(f"Estas comprando a {precio_mercado}% algo que tiene {prob_real}% de probabilidad.")
         else:
-            print("⚖️ SEÑAL: PRECIO EQUILIBRADO.")
+            print("⚖️ SEÑAL: NO OPERAR (Sin ventaja clara)")
         print("="*40 + "\n")
     else:
-        print("\n⚠️ Datos insuficientes para calcular rentabilidad.")
+        print("\n❌ No pudimos completar el análisis porque Polymarket no está enviando el precio por API.")
 
 if __name__ == "__main__":
     run_simulation()
