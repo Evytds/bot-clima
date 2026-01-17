@@ -3,24 +3,23 @@ import json
 from datetime import datetime
 
 def run_bot():
-    print(f"--- 🕵️ BUSCANDO NOMBRES DE MERCADOS ---")
+    print("--- 🕵️ INICIANDO MODO DETECTIVE ---")
     
-    # Buscamos la palabra "Rain" en general
+    # Buscamos mercados que digan "Rain"
     try:
         url = "https://gamma-api.polymarket.com/events"
-        # Traemos 50 resultados para encontrar el de NY seguro
+        # Pedimos 50 resultados para encontrar el de NY sí o sí
         r = requests.get(url, params={"q": "Rain", "closed": "false", "limit": 50})
         events = r.json()
         
-        print(f"✅ Se encontraron {len(events)} eventos. MIRA ESTA LISTA:")
-        print("="*50)
+        print(f"✅ ENCONTRÉ {len(events)} MERCADOS. COPIA EL NOMBRE CORRECTO DE AQUÍ ABAJO:")
+        print("👇" * 20)
         
         for event in events:
             title = event.get('title', 'Sin título')
-            # Imprimimos el título para que tú lo leas
             print(f"👉 {title}")
             
-        print("="*50)
+        print("👆" * 20)
         
     except Exception as e:
         print(f"❌ Error: {e}")
