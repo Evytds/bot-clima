@@ -3,63 +3,71 @@ import json
 from datetime import datetime, timedelta
 
 def run_simulation():
-    print(f"--- 🧪 SIMULACIÓN MEJORADA: {datetime.now()} ---")
+    print(f"--- 🧪 SIMULACIÓN (TIRO AL BLANCO): {datetime.now()} ---")
     
-    # 1. CLIMA PARA MAÑANA
-    mañana = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+    # 1. CLIMA PARA EL 18 DE ENERO
+    # Forzamos la fecha para que coincida exactamente con tu mercado
+    fecha_objetivo = "2026-01-18"
     prob_real = 0
     try:
         r_weather = requests.get(
             "https://api.open-meteo.com/v1/forecast",
-            params={"latitude": 40.78, "longitude": -73.97, "daily": "precipitation_probability_max", "timezone": "America/New_York", "start_date": mañana, "end_date": mañana}
+            params={
+                "latitude": 40.78, 
+                "longitude": -73.97, 
+                "daily": "precipitation_probability_max", 
+                "timezone": "America/New_York",
+                "start_date": fecha_objetivo,
+                "end_date": fecha_objetivo
+            }
         )
         prob_real = r_weather.json()['daily']['precipitation_probability_max'][0]
-        print(f"🌦️ Probabilidad Satélite ({mañana}): {prob_real}%")
+        print(f"🌦️ Probabilidad Satélite para el {fecha_objetivo}: {prob_real}%")
     except:
-        print("❌ Error clima")
+        print("❌ Error obteniendo clima")
 
-    # 2. BÚSQUEDA INTELIGENTE EN POLYMARKET
+    # 2. PRECIO EN POLYMARKET (Búsqueda Directa por ID/Slug)
+    # Usamos el nombre exacto que venía en tu link
+    slug_mercado = "will-it-rain-in-nyc-on-january-18"
     precio_mercado = 0
-    nombre_encontrado = ""
     
     try:
-        # Buscamos "Rain" y filtramos nosotros
-        url = "https://gamma-api.polymarket.com/events?q=Rain&closed=false"
+        url = f"https://gamma-api.polymarket.com/events?slug={slug_mercado}"
         r_poly = requests.get(url)
-        eventos = r_poly.json()
+        data = r_poly.json()
         
-        for e in eventos:
-            titulo = e.get('title', '')
-            # Buscamos que sea de NYC y de la fecha de mañana (Jan 18)
-            if ("NYC" in titulo or "New York" in titulo) and "Jan" in titulo:
-                markets = e.get('markets', [])
-                if markets:
-                    prices = json.loads(markets[0].get('outcomePrices', '["0", "0"]'))
-                    precio_mercado = float(prices[0]) * 100
-                    nombre_encontrado = titulo
-                    break
-
-        if nombre_encontrado:
-            print(f"📊 Mercado: {nombre_encontrado}")
-            print(f"💰 Precio: {precio_mercado}%")
+        if data:
+            evento = data[0]
+            titulo = evento.get('title')
+            markets = evento.get('markets', [])
+            if markets:
+                # Extraemos el precio del 'YES'
+                prices = json.loads(markets[0].get('outcomePrices', '["0", "0"]'))
+                precio_mercado = float(prices[0]) * 100
+                print(f"📊 Mercado Encontrado: {titulo}")
+                print(f"💰 Precio actual del 'YES': {precio_mercado}%")
         else:
-            print("⚠️ No encontré el mercado de mañana en Polymarket.")
+            print(f"⚠️ No encontré el mercado con el nombre: {slug_mercado}")
 
-    except Exception as err:
-        print(f"❌ Error API: {err}")
+    except Exception as e:
+        print(f"❌ Error API Polymarket: {e}")
 
-    # 3. DECISIÓN FINAL
+    # 3. ANÁLISIS DE RENTABILIDAD
     if prob_real > 0 and precio_mercado > 0:
         ventaja = prob_real - precio_mercado
-        print("\n" + "="*30)
-        print(f"DIFERENCIA (EDGE): {ventaja:.2f}%")
+        print("\n" + "========================================")
+        print(f"🔍 VENTAJA DETECTADA (EDGE): {ventaja:.2f}%")
+        
         if ventaja > 10:
             print("💰 ACCIÓN: COMPRARÍA 'YES'")
+            print(f"Razón: La ciencia ({prob_real}%) es muy superior al precio ({precio_mercado}%)")
         elif ventaja < -10:
-            print("📉 ACCIÓN: NO COMPRARÍA (Caro)")
+            print("📉 ACCIÓN: NO COMPRARÍA")
+            print("Razón: El mercado está pagando demasiado para un riesgo alto.")
         else:
-            print("⚖️ ACCIÓN: ESPERAR (Precio justo)")
-        print("="*30)
+            print("⚖️ ACCIÓN: ESPERAR")
+            print("Razón: El precio es justo según los satélites.")
+        print("========================================\n")
 
 if __name__ == "__main__":
     run_simulation()
