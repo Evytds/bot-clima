@@ -8,30 +8,39 @@
             <style>
                 body { font-family: sans-serif; background: #0f172a; color: white; text-align: center; }
                 .container { width: 90%; max-width: 800px; margin: auto; padding: 20px; }
-                .balance { font-size: 3em; color: #10b981; font-weight: bold; }
+                .balance { font-size: 4em; color: #10b981; font-weight: bold; margin: 20px 0; }
+                .chart-box { background: #1e293b; padding: 20px; border-radius: 15px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5); }
             </style>
         </head>
         <body>
             <div class="container">
-                <h1>Balance del Bot</h1>
-                <div class="balance">${self.data["balance"]:.2f} USDC</div>
-                <canvas id="chart"></canvas>
+                <h1>Capital en USDC</h1>
+                <div class="balance">$50.00</div>
+                <div class="chart-box">
+                    <canvas id="chart"></canvas>
+                </div>
             </div>
             <script>
                 new Chart(document.getElementById('chart'), {
                     type: 'line',
                     data: {
-                        labels: ["13:36", "13:36"],
+                        labels: ["13:36", "13:36", "13:43"],
                         datasets: [{
-                            label: 'Capital (USDC)',
-                            data: [50.0, 50.0],
+                            label: 'Balance USDC',
+                            data: [50.0, 50.0, 50.0],
                             borderColor: '#10b981',
                             backgroundColor: 'rgba(16, 185, 129, 0.1)',
                             fill: true,
                             tension: 0.4
                         }]
                     },
-                    options: { scales: { y: { grid: { color: '#1e293b' } } } }
+                    options: { 
+                        scales: { 
+                            y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
+                            x: { ticks: { color: '#94a3b8' } }
+                        },
+                        plugins: { legend: { labels: { color: 'white' } } }
+                    }
                 });
             </script>
         </body>
