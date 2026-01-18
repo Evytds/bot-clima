@@ -1,0 +1,38 @@
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Dashboard Bot Clima</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+            <style>
+                body { font-family: sans-serif; background: #0f172a; color: white; text-align: center; }
+                .container { width: 90%; max-width: 800px; margin: auto; padding: 20px; }
+                .balance { font-size: 3em; color: #10b981; font-weight: bold; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Balance del Bot</h1>
+                <div class="balance">${self.data["balance"]:.2f} USDC</div>
+                <canvas id="chart"></canvas>
+            </div>
+            <script>
+                new Chart(document.getElementById('chart'), {
+                    type: 'line',
+                    data: {
+                        labels: ["13:36", "13:36"],
+                        datasets: [{
+                            label: 'Capital (USDC)',
+                            data: [50.0, 50.0],
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            fill: true,
+                            tension: 0.4
+                        }]
+                    },
+                    options: { scales: { y: { grid: { color: '#1e293b' } } } }
+                });
+            </script>
+        </body>
+        </html>
