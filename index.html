@@ -2,46 +2,46 @@
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Dashboard Bot Clima</title>
+            <title>Bot de Trading Perpetuo</title>
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
             <style>
-                body { font-family: sans-serif; background: #0f172a; color: white; text-align: center; }
+                body { font-family: sans-serif; background: #0f172a; color: white; text-align: center; margin: 0; }
                 .container { width: 90%; max-width: 800px; margin: auto; padding: 20px; }
-                .balance { font-size: 4.5em; color: #10b981; font-weight: bold; margin: 10px 0; }
-                .chart-box { background: #1e293b; padding: 20px; border-radius: 15px; margin-top: 20px; }
+                .balance { font-size: 4em; color: #10b981; font-weight: bold; margin: 10px 0; }
+                .card { background: #1e293b; padding: 20px; border-radius: 15px; margin-top: 20px; }
+                table { width: 100%; margin-top: 10px; border-collapse: collapse; }
+                td { padding: 10px; border-top: 1px solid #334155; }
             </style>
         </head>
         <body>
             <div class="container">
-                <p style="color: #94a3b8;">CAPITAL DISPONIBLE</p>
+                <p style="color: #94a3b8;">CAPITAL ACTUAL</p>
                 <div class="balance">$50.00</div>
-                <p style="color: #94a3b8;">USDC (Simulado)</p>
-                <div class="chart-box">
-                    <canvas id="chart"></canvas>
+                <p style="color: #94a3b8;">USDC (Modo Simulación)</p>
+                
+                <div class="card"><canvas id="chart"></canvas></div>
+
+                <div class="card">
+                    <h3>🎯 Oportunidades por Ciudad</h3>
+                    <table><tr><td>Esperando datos...</td></tr></table>
                 </div>
             </div>
             <script>
                 new Chart(document.getElementById('chart'), {
                     type: 'line',
                     data: {
-                        labels: ["13:36", "13:36", "13:43", "13:45", "13:50", "13:55", "13:56"],
+                        labels: ["13:36", "13:36", "13:43", "13:45", "13:50", "13:55", "13:56", "14:09"],
                         datasets: [{
-                            label: 'Rendimiento USDC',
-                            data: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0],
+                            label: 'Balance USDC',
+                            data: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0],
                             borderColor: '#10b981',
                             backgroundColor: 'rgba(16, 185, 129, 0.1)',
                             fill: true,
                             tension: 0.4
                         }]
                     },
-                    options: { 
-                        scales: { 
-                            y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
-                            x: { ticks: { color: '#94a3b8' } }
-                        },
-                        plugins: { legend: { display: false } }
-                    }
+                    options: { plugins: { legend: { display: false } } }
                 });
             </script>
         </body>
