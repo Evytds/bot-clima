@@ -2,9 +2,11 @@ name: Ejecutar Bot de Clima
 
 on:
   schedule:
-    # Se ejecuta cada 30 minutos, todos los días
-    - cron: '*/30 * * * *'
-  workflow_dispatch: # Permite ejecución manual si lo deseas
+    - cron: '*/30 * * * *'  # Ejecución cada 30 minutos
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -19,17 +21,17 @@ jobs:
           python-version: '3.9'
 
       - name: Instalar dependencias
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests
+        run: pip install requests
 
       - name: Ejecutar el Bot
         run: python bot.py
 
-      - name: Guardar cambios (Dashboard y Billetera)
+      - name: Guardar cambios
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
-          git add billetera_virtual.json index.html historial_ganancias.csv
-          git commit -m "Actualización automática: Balance y Dashboard" || exit 0
+          git add index.html || true
+          git add billetera_virtual.json || true
+          git add historial_ganancias.csv || true
+          git commit -m "🤖 Actualización automática del Dashboard" || exit 0
           git push
