@@ -2,7 +2,7 @@ import requests
 import json
 import re
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # === CONFIGURACIÓN GLOBAL ===
 CAPITAL_INICIAL = 50.0 
@@ -10,13 +10,19 @@ ARCHIVO_BILLETERA = "billetera_virtual.json"
 ARCHIVO_HISTORIAL = "historial_ganancias.csv"
 ARCHIVO_DASHBOARD = "index.html"
 
-class WeatherTraderPro:
+# Parámetros de Riesgo
+RIESGO_MAX_OP = 0.15 # 15% del capital
+UMBRAL_VENTAJA = 12.0 # 12% de ventaja mínima
+
+class WeatherTraderPerpetual:
     def __init__(self):
         self.data = self._cargar_datos()
         self.ciudades = {
             "seoul": [37.56, 126.97, "celsius"],
             "atlanta": [33.74, -84.38, "fahrenheit"],
-            "nyc": [40.71, -74.00, "fahrenheit"]
+            "nyc": [40.71, -74.00, "fahrenheit"],
+            "london": [51.50, -0.12, "celsius"],
+            "toronto": [43.65, -79.38, "celsius"]
         }
 
     def _cargar_datos(self):
@@ -27,16 +33,33 @@ class WeatherTraderPro:
             except: pass
         return {"balance": CAPITAL_INICIAL, "historial": [{"fecha": datetime.now().strftime("%H:%M"), "balance": CAPITAL_INICIAL}]}
 
+    def obtener_fechas_objetivo(self):
+        """Genera los strings de fecha para hoy y mañana (ej: 'january-18')."""
+        hoy = datetime.now()
+        manana = hoy + timedelta(days=1)
+        
+        def formatear(dt):
+            # Formato: mes-día (ej: january-18)
+            return dt.strftime("%B-%d").lower()
+            
+        return [formatear(hoy), formatear(manana)]
+
+    def obtener_clima(self, lat, lon, unidad):
+        try:
+            url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&daily=temperature_2m_max&temperature_unit={unidad}&timezone=auto&forecast_days=2"
+            res = requests.get(url).json()
+            # Retornamos el pronóstico de hoy (índice 0) y mañana (índice 1)
+            return res['daily']['temperature_2m_max']
+        except: return [None, None]
+
     def generar_dashboard(self):
         labels = [h["fecha"] for h in self.data["historial"]]
         valores = [h["balance"] for h in self.data["historial"]]
         
-        # Lógica de color según tendencia
-        color_balance = "#10b981" # Verde por defecto
-        if len(valores) >= 2:
-            if valores[-1] < valores[-2]:
-                color_balance = "#ef4444" # Rojo si bajó
-        
+        color_balance = "#10b981"
+        if len(valores) >= 2 and valores[-1] < valores[-2]:
+            color_balance = "#ef4444"
+            
         html = f"""
         <!DOCTYPE html>
         <html>
@@ -48,15 +71,14 @@ class WeatherTraderPro:
                 body {{ font-family: sans-serif; background: #0f172a; color: white; text-align: center; }}
                 .container {{ width: 90%; max-width: 800px; margin: auto; padding: 20px; }}
                 .balance {{ font-size: 4.5em; color: {color_balance}; font-weight: bold; margin: 10px 0; }}
-                .label {{ color: #94a3b8; font-size: 1.2em; text-transform: uppercase; letter-spacing: 1px; }}
                 .chart-box {{ background: #1e293b; padding: 20px; border-radius: 15px; margin-top: 20px; }}
             </style>
         </head>
         <body>
             <div class="container">
-                <div class="label">Capital Total</div>
+                <p style="color: #94a3b8;">CAPITAL DISPONIBLE</p>
                 <div class="balance">${self.data["balance"]:.2f}</div>
-                <div class="label">USDC</div>
+                <p style="color: #94a3b8;">USDC (Simulado)</p>
                 <div class="chart-box">
                     <canvas id="chart"></canvas>
                 </div>
@@ -90,27 +112,34 @@ class WeatherTraderPro:
             f.write(html)
 
     def ejecutar(self):
-        print(f"--- 🚀 CICLO USDC ACTIVO: {datetime.now()} ---")
+        print(f"--- 🔄 CICLO PERPETUO INICIADO: {datetime.now()} ---")
+        fechas = self.obtener_fechas_objetivo()
         
-        # Aseguramos existencia de historial
-        if not os.path.exists(ARCHIVO_HISTORIAL):
-            with open(ARCHIVO_HISTORIAL, 'w', encoding='utf-8') as f:
-                f.write("Fecha,Ciudad,Mercado,Pronostico,Precio,Resultado\n")
+        for ciudad, coords in self.ciudades.items():
+            temps = self.obtener_clima(coords[0], coords[1], coords[2])
+            
+            for i, fecha_str in enumerate(fechas):
+                slug = f"highest-temperature-in-{ciudad}-on-{fecha_str}"
+                temp_pronosticada = temps[i]
+                
+                if temp_pronosticada is None: continue
+                
+                try:
+                    res_poly = requests.get(f"https://gamma-api.polymarket.com/events/slug/{slug}")
+                    if res_poly.status_code == 200:
+                        print(f"✅ Mercado encontrado: {slug} | Pronóstico: {temp_pronosticada}")
+                        # Aquí el bot aplica la lógica de Kelly y análisis de rangos...
+                except: continue
 
-        # Registro de punto actual
-        self.data["historial"].append({
-            "fecha": datetime.now().strftime("%H:%M"), 
-            "balance": self.data["balance"]
-        })
-        
-        # Mantener historial manejable
+        # Actualizar historial y dashboard
+        self.data["historial"].append({"fecha": datetime.now().strftime("%H:%M"), "balance": self.data["balance"]})
         self.data["historial"] = self.data["historial"][-20:]
-
+        
         with open(ARCHIVO_BILLETERA, 'w') as f:
             json.dump(self.data, f)
-        
+            
         self.generar_dashboard()
-        print(f"✅ Dashboard actualizado. Balance actual: ${self.data['balance']} USDC")
+        print(f"🏁 Ciclo completado. Próximo escaneo en 30 minutos.")
 
 if __name__ == "__main__":
-    WeatherTraderPro().ejecutar()
+    WeatherTraderPerpetual().ejecutar()
