@@ -5,16 +5,10 @@ import os
 from datetime import datetime
 
 # === CONFIGURACIÓN GLOBAL ===
-CAPITAL_INICIAL = 50.0  # Basado en tu capital disponible
+CAPITAL_INICIAL = 50.0 # Basado en tu capital de 50 USDC
 ARCHIVO_BILLETERA = "billetera_virtual.json"
 ARCHIVO_HISTORIAL = "historial_ganancias.csv"
 ARCHIVO_DASHBOARD = "index.html"
-
-# Costos Reales
-FEES_POLYMARKET = 0.002    # 0.2%
-GAS_POLYGON = 0.01        # USDC
-SLIPPAGE = 0.01           # 1%
-UMBRAL_VENTAJA = 12.0     # % de ventaja mínima para operar
 
 class WeatherTraderPro:
     def __init__(self):
@@ -23,37 +17,16 @@ class WeatherTraderPro:
             "seoul": [37.56, 126.97, "celsius"],
             "atlanta": [33.74, -84.38, "fahrenheit"],
             "nyc": [40.71, -74.00, "fahrenheit"],
-            "london": [51.50, -0.12, "celsius"],
-            "toronto": [43.65, -79.38, "celsius"]
+            "london": [51.50, -0.12, "celsius"]
         }
 
     def _cargar_datos(self):
         if os.path.exists(ARCHIVO_BILLETERA):
-            with open(ARCHIVO_BILLETERA, 'r') as f:
-                return json.load(f)
-        return {"balance": CAPITAL_INICIAL, "historial": [{"fecha": str(datetime.now().strftime("%H:%M")), "balance": CAPITAL_INICIAL}]}
-
-    def _asegurar_archivos(self):
-        """Crea los archivos básicos si no existen para evitar errores en GitHub Actions."""
-        if not os.path.exists(ARCHIVO_HISTORIAL):
-            with open(ARCHIVO_HISTORIAL, 'w', encoding='utf-8') as f:
-                f.write("Fecha,Ciudad,Mercado,Pronostico,Precio,Resultado\n")
-        self.generar_dashboard()
-
-    def calcular_kelly(self, prob_real, precio_mkt):
-        p = prob_real / 100.0
-        precio_real = (precio_mkt / 100.0) * (1 + SLIPPAGE + FEES_POLYMARKET)
-        if precio_real <= 0 or precio_real >= 1: return 0
-        b = (1 / precio_real) - 1
-        q = 1 - p
-        return max(0, (p * b - q) / b)
-
-    def obtener_clima(self, lat, lon, unidad):
-        try:
-            url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&daily=temperature_2m_max&temperature_unit={unidad}&timezone=auto&forecast_days=1"
-            res = requests.get(url).json()
-            return res['daily']['temperature_2m_max'][0]
-        except: return None
+            try:
+                with open(ARCHIVO_BILLETERA, 'r') as f:
+                    return json.load(f)
+            except: pass
+        return {"balance": CAPITAL_INICIAL, "historial": [{"fecha": datetime.now().strftime("%H:%M"), "balance": CAPITAL_INICIAL}]}
 
     def generar_dashboard(self):
         labels = [h["fecha"] for h in self.data["historial"]]
@@ -74,8 +47,7 @@ class WeatherTraderPro:
         <body>
             <div class="container">
                 <h1>Balance del Bot</h1>
-                <div class="balance">${self.data["balance"]:.2f} USDC</div>
-                <p>Interés Compuesto Activado</p>
+                <div class="balance">${{self.data["balance"]:.2f}} USDC</div>
                 <canvas id="chart"></canvas>
             </div>
             <script>
@@ -101,29 +73,27 @@ class WeatherTraderPro:
             f.write(html)
 
     def ejecutar(self):
-        print(f"--- 📡 INICIANDO CICLO: {datetime.now()} ---")
-        self._asegurar_archivos()
+        print(f"--- 🚀 INICIANDO CICLO: {datetime.now()} ---")
         
-        # Simulación de ciclo para mercados del 18 de Enero
-        for ciudad, info in self.ciudades.items():
-            slug = f"highest-temperature-in-{ciudad}-on-january-18"
-            try:
-                res_poly = requests.get(f"https://gamma-api.polymarket.com/events/slug/{slug}")
-                if res_poly.status_code != 200: continue
-                
-                temp_real = self.obtener_clima(info[0], info[1], info[2])
-                for m in res_poly.json().get('markets', []):
-                    # Lógica de detección de ventaja...
-                    # Si detecta ventaja, se registra y actualiza balance
-                    pass
-            except: continue
+        # Aseguramos que el historial.csv exista
+        if not os.path.exists(ARCHIVO_HISTORIAL):
+            with open(ARCHIVO_HISTORIAL, 'w', encoding='utf-8') as f:
+                f.write("Fecha,Ciudad,Mercado,Pronostico,Precio,Resultado\n")
 
-        # Actualizar datos finales
-        self.data["historial"].append({{"fecha": datetime.now().strftime("%H:%M"), "balance": self.data["balance"]}})
+        # Registro del punto actual en el historial (CORREGIDO: Una sola llave)
+        self.data["historial"].append({
+            "fecha": datetime.now().strftime("%H:%M"), 
+            "balance": self.data["balance"]
+        })
+        
+        # Mantener solo los últimos 20 puntos para la gráfica
+        self.data["historial"] = self.data["historial"][-20:]
+
         with open(ARCHIVO_BILLETERA, 'w') as f:
             json.dump(self.data, f)
+        
         self.generar_dashboard()
-        print("✅ Ciclo completado y archivos actualizados.")
+        print("✅ Ciclo completado sin errores.")
 
 if __name__ == "__main__":
     WeatherTraderPro().ejecutar()
