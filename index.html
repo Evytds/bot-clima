@@ -2,51 +2,40 @@
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Elite Weather Dashboard</title>
+            <title>Simulador WeatherBot</title>
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
             <style>
-                body { font-family: sans-serif; background: #0f172a; color: white; text-align: center; margin: 0; }
-                .container { width: 95%; max-width: 800px; margin: auto; padding: 20px; }
-                .balance { font-size: 4.5em; color: #10b981; font-weight: bold; margin: 10px 0; }
-                .card { background: #1e293b; padding: 20px; border-radius: 15px; margin-top: 20px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5); }
-                .city-tag { display: inline-block; background: #334155; padding: 5px 10px; border-radius: 5px; margin: 5px; font-size: 0.8em; color: #94a3b8; }
+                body { font-family: sans-serif; background: #0f172a; color: white; text-align: center; }
+                .container { width: 90%; max-width: 800px; margin: auto; padding: 20px; }
+                .balance { font-size: 4em; color: #10b981; font-weight: bold; }
+                .log { background: #1e293b; padding: 10px; text-align: left; font-family: monospace; font-size: 0.8em; margin-top: 20px; }
             </style>
         </head>
         <body>
             <div class="container">
-                <p style="color: #94a3b8; letter-spacing: 2px;">ESTADO DEL CAPITAL</p>
-                <div class="balance">$50.00</div>
-                <p style="color: #94a3b8;">USDC (Simulación Activa)</p>
-                
-                <div class="card">
-                    <canvas id="chart"></canvas>
-                </div>
-
-                <div class="card">
-                    <h3>Radar Activo</h3>
-                    <span class="city-tag">SEOUL</span><span class="city-tag">ATLANTA</span><span class="city-tag">DALLAS</span><span class="city-tag">SEATTLE</span><span class="city-tag">NYC</span><span class="city-tag">LONDON</span>
+                <p>SIMULACIÓN ACTIVA</p>
+                <div class="balance">$58.00</div>
+                <canvas id="chart"></canvas>
+                <div class="log">
+                    Última actualización: 19:25:15<br>
+                    Estrategia: Kelly Conservador
                 </div>
             </div>
             <script>
                 new Chart(document.getElementById('chart'), {
                     type: 'line',
                     data: {
-                        labels: ["13:36", "13:36", "13:43", "13:45", "13:50", "13:55", "13:56", "14:09", "14:20", "14:39", "15:35", "16:48", "17:37", "18:52"],
+                        labels: ["13:36", "13:36", "13:43", "13:45", "13:50", "13:55", "13:56", "14:09", "14:20", "14:39", "15:35", "16:48", "17:37", "18:52", "19:25"],
                         datasets: [{
-                            label: 'USDC',
-                            data: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0],
+                            label: 'Capital Simulado',
+                            data: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 58.0],
                             borderColor: '#10b981',
-                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
                             fill: true,
-                            tension: 0.4,
-                            pointRadius: 0
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)'
                         }]
                     },
-                    options: { 
-                        plugins: { legend: { display: false } },
-                        scales: { y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } }, x: { display: false } }
-                    }
+                    options: { scales: { x: { display: false } } }
                 });
             </script>
         </body>
