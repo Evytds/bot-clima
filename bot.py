@@ -16,8 +16,7 @@ class WeatherTraderPro:
         self.ciudades = {
             "seoul": [37.56, 126.97, "celsius"],
             "atlanta": [33.74, -84.38, "fahrenheit"],
-            "nyc": [40.71, -74.00, "fahrenheit"],
-            "london": [51.50, -0.12, "celsius"]
+            "nyc": [40.71, -74.00, "fahrenheit"]
         }
 
     def _cargar_datos(self):
@@ -32,6 +31,12 @@ class WeatherTraderPro:
         labels = [h["fecha"] for h in self.data["historial"]]
         valores = [h["balance"] for h in self.data["historial"]]
         
+        # Lógica de color según tendencia
+        color_balance = "#10b981" # Verde por defecto
+        if len(valores) >= 2:
+            if valores[-1] < valores[-2]:
+                color_balance = "#ef4444" # Rojo si bajó
+        
         html = f"""
         <!DOCTYPE html>
         <html>
@@ -42,14 +47,16 @@ class WeatherTraderPro:
             <style>
                 body {{ font-family: sans-serif; background: #0f172a; color: white; text-align: center; }}
                 .container {{ width: 90%; max-width: 800px; margin: auto; padding: 20px; }}
-                .balance {{ font-size: 4em; color: #10b981; font-weight: bold; margin: 20px 0; }}
-                .chart-box {{ background: #1e293b; padding: 20px; border-radius: 15px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5); }}
+                .balance {{ font-size: 4.5em; color: {color_balance}; font-weight: bold; margin: 10px 0; }}
+                .label {{ color: #94a3b8; font-size: 1.2em; text-transform: uppercase; letter-spacing: 1px; }}
+                .chart-box {{ background: #1e293b; padding: 20px; border-radius: 15px; margin-top: 20px; }}
             </style>
         </head>
         <body>
             <div class="container">
-                <h1>Capital en USDC</h1>
+                <div class="label">Capital Total</div>
                 <div class="balance">${self.data["balance"]:.2f}</div>
+                <div class="label">USDC</div>
                 <div class="chart-box">
                     <canvas id="chart"></canvas>
                 </div>
@@ -60,7 +67,7 @@ class WeatherTraderPro:
                     data: {{
                         labels: {json.dumps(labels)},
                         datasets: [{{
-                            label: 'Balance USDC',
+                            label: 'Rendimiento USDC',
                             data: {json.dumps(valores)},
                             borderColor: '#10b981',
                             backgroundColor: 'rgba(16, 185, 129, 0.1)',
@@ -73,7 +80,7 @@ class WeatherTraderPro:
                             y: {{ grid: {{ color: '#334155' }}, ticks: {{ color: '#94a3b8' }} }},
                             x: {{ ticks: {{ color: '#94a3b8' }} }}
                         }},
-                        plugins: {{ legend: {{ labels: {{ color: 'white' }} }} }}
+                        plugins: {{ legend: {{ display: false }} }}
                     }}
                 }});
             </script>
@@ -83,24 +90,27 @@ class WeatherTraderPro:
             f.write(html)
 
     def ejecutar(self):
-        print(f"--- 🚀 INICIANDO CICLO: {datetime.now()} ---")
+        print(f"--- 🚀 CICLO USDC ACTIVO: {datetime.now()} ---")
         
+        # Aseguramos existencia de historial
         if not os.path.exists(ARCHIVO_HISTORIAL):
             with open(ARCHIVO_HISTORIAL, 'w', encoding='utf-8') as f:
                 f.write("Fecha,Ciudad,Mercado,Pronostico,Precio,Resultado\n")
 
+        # Registro de punto actual
         self.data["historial"].append({
             "fecha": datetime.now().strftime("%H:%M"), 
             "balance": self.data["balance"]
         })
         
+        # Mantener historial manejable
         self.data["historial"] = self.data["historial"][-20:]
 
         with open(ARCHIVO_BILLETERA, 'w') as f:
             json.dump(self.data, f)
         
         self.generar_dashboard()
-        print("✅ Ciclo completado sin conversiones de moneda.")
+        print(f"✅ Dashboard actualizado. Balance actual: ${self.data['balance']} USDC")
 
 if __name__ == "__main__":
     WeatherTraderPro().ejecutar()
