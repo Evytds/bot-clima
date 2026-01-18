@@ -2,46 +2,51 @@
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Bot de Trading Perpetuo</title>
+            <title>Elite Weather Dashboard</title>
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
             <style>
                 body { font-family: sans-serif; background: #0f172a; color: white; text-align: center; margin: 0; }
-                .container { width: 90%; max-width: 800px; margin: auto; padding: 20px; }
-                .balance { font-size: 4em; color: #10b981; font-weight: bold; margin: 10px 0; }
-                .card { background: #1e293b; padding: 20px; border-radius: 15px; margin-top: 20px; }
-                table { width: 100%; margin-top: 10px; border-collapse: collapse; }
-                td { padding: 10px; border-top: 1px solid #334155; }
+                .container { width: 95%; max-width: 800px; margin: auto; padding: 20px; }
+                .balance { font-size: 4.5em; color: #10b981; font-weight: bold; margin: 10px 0; }
+                .card { background: #1e293b; padding: 20px; border-radius: 15px; margin-top: 20px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5); }
+                .city-tag { display: inline-block; background: #334155; padding: 5px 10px; border-radius: 5px; margin: 5px; font-size: 0.8em; color: #94a3b8; }
             </style>
         </head>
         <body>
             <div class="container">
-                <p style="color: #94a3b8;">CAPITAL ACTUAL</p>
+                <p style="color: #94a3b8; letter-spacing: 2px;">ESTADO DEL CAPITAL</p>
                 <div class="balance">$50.00</div>
-                <p style="color: #94a3b8;">USDC (Modo Simulación)</p>
+                <p style="color: #94a3b8;">USDC (Simulación Activa)</p>
                 
-                <div class="card"><canvas id="chart"></canvas></div>
+                <div class="card">
+                    <canvas id="chart"></canvas>
+                </div>
 
                 <div class="card">
-                    <h3>🎯 Oportunidades por Ciudad</h3>
-                    <table><tr><td>Esperando datos...</td></tr></table>
+                    <h3>Radar Activo</h3>
+                    <span class="city-tag">SEOUL</span><span class="city-tag">ATLANTA</span><span class="city-tag">DALLAS</span><span class="city-tag">SEATTLE</span><span class="city-tag">NYC</span><span class="city-tag">LONDON</span>
                 </div>
             </div>
             <script>
                 new Chart(document.getElementById('chart'), {
                     type: 'line',
                     data: {
-                        labels: ["13:36", "13:36", "13:43", "13:45", "13:50", "13:55", "13:56", "14:09"],
+                        labels: ["13:36", "13:36", "13:43", "13:45", "13:50", "13:55", "13:56", "14:09", "14:20"],
                         datasets: [{
-                            label: 'Balance USDC',
-                            data: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0],
+                            label: 'USDC',
+                            data: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0],
                             borderColor: '#10b981',
                             backgroundColor: 'rgba(16, 185, 129, 0.1)',
                             fill: true,
-                            tension: 0.4
+                            tension: 0.4,
+                            pointRadius: 0
                         }]
                     },
-                    options: { plugins: { legend: { display: false } } }
+                    options: { 
+                        plugins: { legend: { display: false } },
+                        scales: { y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } }, x: { display: false } }
+                    }
                 });
             </script>
         </body>
