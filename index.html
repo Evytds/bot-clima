@@ -8,14 +8,16 @@
             <style>
                 body { font-family: sans-serif; background: #0f172a; color: white; text-align: center; }
                 .container { width: 90%; max-width: 800px; margin: auto; padding: 20px; }
-                .balance { font-size: 4em; color: #10b981; font-weight: bold; margin: 20px 0; }
-                .chart-box { background: #1e293b; padding: 20px; border-radius: 15px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5); }
+                .balance { font-size: 4.5em; color: #10b981; font-weight: bold; margin: 10px 0; }
+                .label { color: #94a3b8; font-size: 1.2em; text-transform: uppercase; letter-spacing: 1px; }
+                .chart-box { background: #1e293b; padding: 20px; border-radius: 15px; margin-top: 20px; }
             </style>
         </head>
         <body>
             <div class="container">
-                <h1>Capital en USDC</h1>
+                <div class="label">Capital Total</div>
                 <div class="balance">$50.00</div>
+                <div class="label">USDC</div>
                 <div class="chart-box">
                     <canvas id="chart"></canvas>
                 </div>
@@ -24,10 +26,10 @@
                 new Chart(document.getElementById('chart'), {
                     type: 'line',
                     data: {
-                        labels: ["13:36", "13:36", "13:43"],
+                        labels: ["13:36", "13:36", "13:43", "13:45"],
                         datasets: [{
-                            label: 'Balance USDC',
-                            data: [50.0, 50.0, 50.0],
+                            label: 'Rendimiento USDC',
+                            data: [50.0, 50.0, 50.0, 50.0],
                             borderColor: '#10b981',
                             backgroundColor: 'rgba(16, 185, 129, 0.1)',
                             fill: true,
@@ -39,7 +41,7 @@
                             y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
                             x: { ticks: { color: '#94a3b8' } }
                         },
-                        plugins: { legend: { labels: { color: 'white' } } }
+                        plugins: { legend: { display: false } }
                     }
                 });
             </script>
