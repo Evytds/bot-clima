@@ -2,15 +2,16 @@ name: Run Weather Bot
 
 on:
   schedule:
-    # ⏱️ CAMBIO: Ejecutar cada 30 minutos
-    - cron: '*/30 * * * *'
-  workflow_dispatch:   # Botón manual
+    # ⏱️ CONFIGURACIÓN DE TIEMPO:
+    # '*/10' significa "Cada 10 minutos" (00, 10, 20, 30, 40, 50)
+    - cron: '*/10 * * * *'
+  workflow_dispatch:   # Te permite correrlo manualmente con el botón si quieres
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Permiso vital para guardar
+      contents: write # Permiso obligatorio para guardar datos
 
     steps:
       - name: Checkout code
@@ -27,6 +28,9 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run bot
+        # Aquí preparamos el terreno para cuando uses claves reales
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         run: python bot.py
 
       - name: Commit and push changes
@@ -34,14 +38,14 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Agregamos los archivos de datos y reportes
+          # Añadir archivos generados
           git add *.json || true
           git add reports/ || true
           
-          # Solo hacemos commit si hubo cambios reales
+          # Solo guardar si el bot hizo algo nuevo
           if git diff --staged --quiet; then
-            echo "No hay cambios en el balance o trades."
+            echo "Sin cambios en este ciclo."
           else
-            git commit -m "🤖 Actualización automática: Balance y Trades (30 min)"
+            git commit -m "⚡ Bot Update: Ciclo de 10 min"
             git push
           fi
