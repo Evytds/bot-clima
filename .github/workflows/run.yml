@@ -1,39 +1,35 @@
-name: Ejecutar Bot de Clima
+name: Run Weather Bot
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # Ejecución cada 30 minutos
-  workflow_dispatch:
-
-permissions:
-  contents: write
+    - cron: '0 * * * *' # Se ejecuta automáticamente cada hora
+  workflow_dispatch:   # Permite que lo ejecutes tú manualmente cuando quieras
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout del código
+      - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Configurar Python
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.10'
 
-      - name: Instalar dependencias
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests pandas
+          pip install -r requirements.txt
 
-      - name: Ejecutar el Bot
+      - name: Run bot
         run: python bot.py
 
-      - name: Guardar cambios
+      - name: Commit and push changes
         run: |
-          git config --global user.name "GitHub Action"
-          git config --global user.email "action@github.com"
-          git add index.html || true
-          git add billetera_virtual.json || true
-          git add historial_ganancias.csv || true
-          git commit -m "🤖 Actualización automática del Dashboard" || exit 0
+          git config --global user.name "actions-user"
+          git config --global user.email "actions@github.com"
+          # Añade los archivos de datos y la carpeta de reportes gráficos
+          git add billetera_virtual.json mercados_pendientes.json auditoria_detallada.csv reports/
+          git commit -m "Actualización automática del Dashboard y trades" || echo "No hay cambios para subir"
           git push
