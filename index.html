@@ -2,37 +2,37 @@
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Simulador WeatherBot</title>
+            <title>Elite Math Simulator</title>
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
             <style>
-                body { font-family: sans-serif; background: #0f172a; color: white; text-align: center; }
-                .container { width: 90%; max-width: 800px; margin: auto; padding: 20px; }
-                .balance { font-size: 4em; color: #10b981; font-weight: bold; }
-                .log { background: #1e293b; padding: 10px; text-align: left; font-family: monospace; font-size: 0.8em; margin-top: 20px; }
+                body { font-family: sans-serif; background: #0f172a; color: white; text-align: center; margin: 0; }
+                .container { width: 95%; max-width: 800px; margin: auto; padding: 20px; }
+                .balance { font-size: 4em; color: #10b981; font-weight: bold; margin: 10px 0; }
+                .card { background: #1e293b; padding: 20px; border-radius: 15px; margin-top: 20px; }
+                .city-tag { display: inline-block; background: #334155; padding: 5px 10px; border-radius: 5px; margin: 5px; font-size: 0.8em; color: #94a3b8; font-weight: bold; }
+                .badge { background: #3b82f6; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.7em; vertical-align: middle; }
             </style>
         </head>
         <body>
             <div class="container">
-                <p>SIMULACIÓN ACTIVA</p>
-                <div class="balance">$106.00</div>
-                <canvas id="chart"></canvas>
-                <div class="log">
-                    Última actualización: 23:35:39<br>
-                    Estrategia: Kelly Conservador
-                </div>
+                <p style="color: #94a3b8;">CAPITAL MATEMÁTICO <span class="badge">KELLY V2</span></p>
+                <div class="balance">$165.71</div>
+                <div class="card"><canvas id="chart"></canvas></div>
+                <div class="card"><p style="color: #94a3b8;">RANGO ACTIVO</p><span class="city-tag">SEOUL</span><span class="city-tag">ATLANTA</span><span class="city-tag">DALLAS</span><span class="city-tag">SEATTLE</span><span class="city-tag">NYC</span><span class="city-tag">LONDON</span></div>
             </div>
             <script>
                 new Chart(document.getElementById('chart'), {
                     type: 'line',
                     data: {
-                        labels: ["13:36", "13:36", "13:43", "13:45", "13:50", "13:55", "13:56", "14:09", "14:20", "14:39", "15:35", "16:48", "17:37", "18:52", "19:25", "19:28", "19:42", "20:40", "21:33", "22:41", "23:35"],
+                        labels: ["13:36", "13:36", "13:43", "13:45", "13:50", "13:55", "13:56", "14:09", "14:20", "14:39", "15:35", "16:48", "17:37", "18:52", "19:25", "19:28", "19:42", "20:40", "21:33", "22:41", "23:35", "00:56"],
                         datasets: [{
-                            label: 'Capital Simulado',
-                            data: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 58.0, 66.0, 74.0, 82.0, 90.0, 98.0, 106.0],
+                            label: 'Equity Curve',
+                            data: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 58.0, 66.0, 74.0, 82.0, 90.0, 98.0, 106.0, 165.70741445897264],
                             borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
                             fill: true,
-                            backgroundColor: 'rgba(16, 185, 129, 0.1)'
+                            tension: 0.1
                         }]
                     },
                     options: { scales: { x: { display: false } } }
