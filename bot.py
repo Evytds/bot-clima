@@ -11,9 +11,11 @@ ARCHIVO_BILLETERA = "billetera_virtual.json"
 ARCHIVO_HISTORIAL = "historial_ganancias.csv"
 ARCHIVO_DASHBOARD = "index.html"
 
-# Parámetros de Seguridad
-KELLY_FRACTION = 0.25  # Kelly Conservador (Usamos solo un cuarto del Kelly Full)
-MAX_DRAWDOWN_LIMIT = 20.0 # Si el balance baja de $20, el bot se apaga por seguridad
+# Parámetros de Riesgo y Realismo
+KELLY_FRACTION = 0.25  
+MAX_DRAWDOWN_LIMIT = 20.0 
+COMISION_MERCADO = 0.02 # 2% de fee por trade ganado (Spread/Comisión)
+MAX_TRADES_POR_CICLO = 3 # Límite para no apostar todo de golpe
 
 class WeatherTraderElite:
     def __init__(self):
@@ -39,76 +41,62 @@ class WeatherTraderElite:
         try:
             url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&daily=temperature_2m_max&temperature_unit={unit}&timezone=auto&forecast_days=1"
             res = requests.get(url).json()
+            # FIX: Usamos [0] directamente, pero validamos None al recibir
             return res['daily']['temperature_2m_max'][0]
         except: return None
 
     def obtener_precio_simulado(self):
-        # Simula ineficiencias del mercado (Precios entre 35 y 65 centavos)
         return random.uniform(0.35, 0.65)
 
     def calcular_probabilidad_real(self, temp, unidad):
-        # Lógica: Las temperaturas extremas son más fáciles de predecir que las medias.
-        # Esto asigna una "Confianza del Satélite" basada en el dato.
-        
-        # Normalizar a Fahrenheit para el cálculo
+        # AJUSTE REALISTA: Probabilidades más conservadoras
         temp_f = temp if unidad == "fahrenheit" else (temp * 9/5) + 32
         
-        # Si hace mucho calor (>90F) o mucho frío (<40F), el satélite tiene alta certeza
-        if temp_f > 90 or temp_f < 40:
-            return 0.85 # 85% de certeza
-        elif temp_f > 80 or temp_f < 50:
-            return 0.70 # 70% de certeza
+        if temp_f > 90 or temp_f < 35:
+            return 0.75 # Bajado de 0.85 (Más realista)
+        elif temp_f > 80 or temp_f < 45:
+            return 0.65 # Bajado de 0.70
         else:
-            return 0.55 # Zona gris (55%), difícil de predecir
+            return 0.52 # Apenas mejor que una moneda al aire (Zona de incertidumbre)
 
     def calcular_kelly(self, probabilidad, precio_mercado):
-        # Fórmula de Kelly: f = (p/q) - (1-p)/q  Donde q es el precio (odds)
-        # Simplificado para binarias: f = (p - precio) / (1 - precio)
-        # Nota: Precio mercado actúa como probabilidad implícita
-        
-        if precio_mercado >= 1: return 0 # Evitar división por cero
-        
+        if precio_mercado >= 1: return 0 
         edge = probabilidad - precio_mercado
-        if edge <= 0: return 0 # No hay ventaja, no apostar
-        
+        if edge <= 0: return 0 
         kelly_full = edge / (1 - precio_mercado)
-        return max(0, kelly_full) # Nunca devolver negativo
+        return max(0, kelly_full) 
 
     def simular_trade(self, ciudad, temp, unidad):
-        # 1. Obtener datos
         precio_mercado = self.obtener_precio_simulado()
         probabilidad_real = self.calcular_probabilidad_real(temp, unidad)
         
-        # 2. Calcular Tamaño de Apuesta (Kelly)
+        # Kelly
         fraccion_kelly = self.calcular_kelly(probabilidad_real, precio_mercado)
-        fraccion_segura = fraccion_kelly * KELLY_FRACTION # Aplicamos factor conservador
-        
+        fraccion_segura = fraccion_kelly * KELLY_FRACTION 
         stake = self.data["balance"] * fraccion_segura
         
-        # Filtros de seguridad (No apostar centavos, ni apuestas suicidas)
-        if stake < 1.0 or stake > (self.data["balance"] * 0.2):
+        # Filtros de seguridad
+        if stake < 1.0 or stake > (self.data["balance"] * 0.15): # Bajado riesgo max al 15%
             return False 
 
-        # 3. Simulación Estadística Honesta (Monte Carlo)
-        # Aquí lanzamos el dado basado en la PROBABILIDAD REAL, no un 0.8 fijo.
+        # Simulación con Fees
         ganancia_neta = 0
         tipo = ""
         
         if random.random() < probabilidad_real:
-            # GANAMOS: El pago es (1 / precio) - 1
-            retorno = (stake / precio_mercado) - stake
-            ganancia_neta = retorno
+            # GANAMOS: (Retorno bruto * (1 - comision)) - stake
+            bruto = (stake / precio_mercado)
+            neto = bruto * (1 - COMISION_MERCADO)
+            ganancia_neta = neto - stake
             tipo = "WIN"
         else:
             # PERDEMOS
             ganancia_neta = -stake
             tipo = "LOSS"
 
-        # 4. Actualizar Balance
         self.data["balance"] += ganancia_neta
-        print(f"🎲 {ciudad.upper()}: Stake ${stake:.2f} (Prob {probabilidad_real*100:.0f}% vs Precio {precio_mercado:.2f}) -> {tipo} ${ganancia_neta:.2f}")
+        print(f"🎲 {ciudad.upper()}: Stake ${stake:.2f} (Prob {probabilidad_real*100:.0f}%) -> {tipo} ${ganancia_neta:.2f}")
         
-        # 5. Guardar CSV (Con encoding UTF-8 explícito como pidió la IA)
         with open(ARCHIVO_HISTORIAL, 'a', encoding='utf-8') as f:
             f.write(f"{datetime.now()},{ciudad},{temp},{probabilidad_real:.2f},{precio_mercado:.2f},{stake:.2f},{ganancia_neta:.2f}\n")
         return True
@@ -119,10 +107,9 @@ class WeatherTraderElite:
 
         labels = [h["fecha"] for h in self.data["historial"]]
         valores = [h["balance"] for h in self.data["historial"]]
-        balance_fmt = f"{self.data['balance']:.2f}"
         
-        color_tema = "#10b981"
-        if len(valores) >= 2 and valores[-1] < valores[-2]: color_tema = "#ef4444"
+        # FIX VISUAL: Compara contra Capital Inicial Global
+        color_tema = "#10b981" if self.data["balance"] >= CAPITAL_INICIAL else "#ef4444"
 
         ciudades_html = "".join([f'<span class="city-tag">{c.upper()}</span>' for c in self.ciudades.keys()])
 
@@ -130,7 +117,7 @@ class WeatherTraderElite:
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Elite Math Simulator</title>
+            <title>Elite Math Simulator V2</title>
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
             <style>
@@ -139,15 +126,28 @@ class WeatherTraderElite:
                 .balance {{ font-size: 4em; color: {color_tema}; font-weight: bold; margin: 10px 0; }}
                 .card {{ background: #1e293b; padding: 20px; border-radius: 15px; margin-top: 20px; }}
                 .city-tag {{ display: inline-block; background: #334155; padding: 5px 10px; border-radius: 5px; margin: 5px; font-size: 0.8em; color: #94a3b8; font-weight: bold; }}
-                .badge {{ background: #3b82f6; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.7em; vertical-align: middle; }}
+                .stats {{ display: flex; justify-content: space-around; margin-top: 10px; color: #94a3b8; font-size: 0.9em; }}
             </style>
         </head>
         <body>
             <div class="container">
-                <p style="color: #94a3b8;">CAPITAL MATEMÁTICO <span class="badge">KELLY V2</span></p>
-                <div class="balance">${balance_fmt}</div>
-                <div class="card"><canvas id="chart"></canvas></div>
-                <div class="card"><p style="color: #94a3b8;">RANGO ACTIVO</p>{ciudades_html}</div>
+                <p style="color: #94a3b8;">CAPITAL NETO (POST-FEES)</p>
+                <div class="balance">${self.data['balance']:.2f}</div>
+                
+                <div class="card">
+                    <canvas id="chart"></canvas>
+                </div>
+                
+                <div class="card">
+                    <p style="color: #94a3b8;">RADAR ACTIVO</p>
+                    {ciudades_html}
+                </div>
+
+                <div class="stats">
+                    <span>Fee: 2%</span>
+                    <span>Max Trades: 3/ciclo</span>
+                    <span>Kelly: 0.25</span>
+                </div>
             </div>
             <script>
                 new Chart(document.getElementById('chart'), {{
@@ -155,15 +155,19 @@ class WeatherTraderElite:
                     data: {{
                         labels: {json.dumps(labels)},
                         datasets: [{{
-                            label: 'Equity Curve',
+                            label: 'Equity',
                             data: {json.dumps(valores)},
                             borderColor: '{color_tema}',
-                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            backgroundColor: 'rgba(125, 125, 125, 0.1)',
                             fill: true,
-                            tension: 0.1
+                            tension: 0.4,
+                            pointRadius: 0
                         }}]
                     }},
-                    options: {{ scales: {{ x: {{ display: false }} }} }}
+                    options: {{ 
+                        plugins: {{ legend: {{ display: false }} }},
+                        scales: {{ x: {{ display: false }}, y: {{ grid: {{ color: '#334155' }} }} }}
+                    }}
                 }});
             </script>
         </body>
@@ -172,21 +176,32 @@ class WeatherTraderElite:
             f.write(html)
 
     def ejecutar(self):
-        print(f"--- 🧮 CICLO MATEMÁTICO REAL: {datetime.now()} ---")
+        print(f"--- 🧮 CICLO V2 (FEES + REALISMO): {datetime.now()} ---")
         
-        # Stop-Loss Global (Drawdown Control)
         if self.data["balance"] < MAX_DRAWDOWN_LIMIT:
-            print(f"⚠️ SISTEMA PAUSADO: Balance bajo (${self.data['balance']}). Requiere recarga.")
+            print(f"⛔ STOP-LOSS ACTIVADO: Balance ${self.data['balance']}")
             return
 
         if not os.path.exists(ARCHIVO_HISTORIAL):
             with open(ARCHIVO_HISTORIAL, 'w', encoding='utf-8') as f:
                 f.write("Fecha,Ciudad,Temp,Prob_Real,Precio,Stake,Resultado\n")
 
-        for ciudad, datos in self.ciudades.items():
+        trades_hoy = 0
+        ciudades_random = list(self.ciudades.items())
+        random.shuffle(ciudades_random) # Mezclar para no priorizar siempre a Seoul por orden alfabético
+
+        for ciudad, datos in ciudades_random:
+            if trades_hoy >= MAX_TRADES_POR_CICLO:
+                print("⏳ Límite de trades por ciclo alcanzado.")
+                break
+
             temp = self.obtener_clima(datos["lat"], datos["lon"], datos["unit"])
-            if temp:
-                self.simular_trade(ciudad, temp, datos["unit"])
+            
+            # FIX 1: Validación robusta de temperatura (Cero no es False)
+            if temp is not None:
+                trade_hecho = self.simular_trade(ciudad, temp, datos["unit"])
+                if trade_hecho:
+                    trades_hoy += 1
 
         self.data["historial"].append({"fecha": datetime.now().strftime("%H:%M"), "balance": self.data["balance"]})
         self.data["historial"] = self.data["historial"][-50:]
@@ -195,6 +210,7 @@ class WeatherTraderElite:
             json.dump(self.data, f)
         
         self.generar_dashboard()
+        print("✅ Ciclo completado.")
 
 if __name__ == "__main__":
     WeatherTraderElite().ejecutar()
