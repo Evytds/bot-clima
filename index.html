@@ -2,7 +2,7 @@
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Elite Math Simulator</title>
+            <title>Elite Math Simulator V2</title>
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
             <style>
@@ -11,31 +11,48 @@
                 .balance { font-size: 4em; color: #10b981; font-weight: bold; margin: 10px 0; }
                 .card { background: #1e293b; padding: 20px; border-radius: 15px; margin-top: 20px; }
                 .city-tag { display: inline-block; background: #334155; padding: 5px 10px; border-radius: 5px; margin: 5px; font-size: 0.8em; color: #94a3b8; font-weight: bold; }
-                .badge { background: #3b82f6; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.7em; vertical-align: middle; }
+                .stats { display: flex; justify-content: space-around; margin-top: 10px; color: #94a3b8; font-size: 0.9em; }
             </style>
         </head>
         <body>
             <div class="container">
-                <p style="color: #94a3b8;">CAPITAL MATEMÁTICO <span class="badge">KELLY V2</span></p>
-                <div class="balance">$165.71</div>
-                <div class="card"><canvas id="chart"></canvas></div>
-                <div class="card"><p style="color: #94a3b8;">RANGO ACTIVO</p><span class="city-tag">SEOUL</span><span class="city-tag">ATLANTA</span><span class="city-tag">DALLAS</span><span class="city-tag">SEATTLE</span><span class="city-tag">NYC</span><span class="city-tag">LONDON</span></div>
+                <p style="color: #94a3b8;">CAPITAL NETO (POST-FEES)</p>
+                <div class="balance">$191.33</div>
+                
+                <div class="card">
+                    <canvas id="chart"></canvas>
+                </div>
+                
+                <div class="card">
+                    <p style="color: #94a3b8;">RADAR ACTIVO</p>
+                    <span class="city-tag">SEOUL</span><span class="city-tag">ATLANTA</span><span class="city-tag">DALLAS</span><span class="city-tag">SEATTLE</span><span class="city-tag">NYC</span><span class="city-tag">LONDON</span>
+                </div>
+
+                <div class="stats">
+                    <span>Fee: 2%</span>
+                    <span>Max Trades: 3/ciclo</span>
+                    <span>Kelly: 0.25</span>
+                </div>
             </div>
             <script>
                 new Chart(document.getElementById('chart'), {
                     type: 'line',
                     data: {
-                        labels: ["13:36", "13:36", "13:43", "13:45", "13:50", "13:55", "13:56", "14:09", "14:20", "14:39", "15:35", "16:48", "17:37", "18:52", "19:25", "19:28", "19:42", "20:40", "21:33", "22:41", "23:35", "00:56"],
+                        labels: ["13:36", "13:36", "13:43", "13:45", "13:50", "13:55", "13:56", "14:09", "14:20", "14:39", "15:35", "16:48", "17:37", "18:52", "19:25", "19:28", "19:42", "20:40", "21:33", "22:41", "23:35", "00:56", "01:54"],
                         datasets: [{
-                            label: 'Equity Curve',
-                            data: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 58.0, 66.0, 74.0, 82.0, 90.0, 98.0, 106.0, 165.70741445897264],
+                            label: 'Equity',
+                            data: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 58.0, 66.0, 74.0, 82.0, 90.0, 98.0, 106.0, 165.70741445897264, 191.33276554068402],
                             borderColor: '#10b981',
-                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            backgroundColor: 'rgba(125, 125, 125, 0.1)',
                             fill: true,
-                            tension: 0.1
+                            tension: 0.4,
+                            pointRadius: 0
                         }]
                     },
-                    options: { scales: { x: { display: false } } }
+                    options: { 
+                        plugins: { legend: { display: false } },
+                        scales: { x: { display: false }, y: { grid: { color: '#334155' } } }
+                    }
                 });
             </script>
         </body>
