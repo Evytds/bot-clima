@@ -2,12 +2,19 @@ name: Run Weather Bot
 
 on:
   schedule:
-    - cron: '0 * * * *' # Se ejecuta automáticamente cada hora
-  workflow_dispatch:   # Permite que lo ejecutes tú manualmente cuando quieras
+    # Se ejecuta automáticamente cada hora (al minuto 0)
+    - cron: '0 * * * *'
+  # Permite ejecutar el bot manualmente desde la pestaña 'Actions'
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    
+    # Permisos necesarios para que el bot pueda escribir cambios en el repositorio
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -20,16 +27,29 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Run bot
         run: python bot.py
 
       - name: Commit and push changes
         run: |
-          git config --global user.name "actions-user"
-          git config --global user.email "actions@github.com"
-          # Añade los archivos de datos y la carpeta de reportes gráficos
-          git add billetera_virtual.json mercados_pendientes.json auditoria_detallada.csv reports/
-          git commit -m "Actualización automática del Dashboard y trades" || echo "No hay cambios para subir"
-          git push
+          # Configuración de identidad de Git
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Agregamos archivos de forma segura para evitar errores de 'pathspec'
+          # El operador '|| true' evita que el proceso falle si no encuentra el archivo
+          git add *.json || true
+          git add *.csv || true
+          
+          # Verificar si existe la carpeta de reportes generada por la versión 6.5.1
+          if [ -d "reports" ]; then git add reports/; fi
+          
+          # Solo realizar el commit y push si hay cambios reales detectados
+          if git diff --staged --quiet; then
+            echo "No se detectaron cambios en el balance o trades."
+          else
+            git commit -m "🤖 Actualización automática: Balance y Analíticas"
+            git push
+          fi
