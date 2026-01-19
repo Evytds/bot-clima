@@ -4,30 +4,25 @@
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
             <style>
-                body { background: #0f172a; color: white; font-family: sans-serif; margin: 0; padding: 20px; text-align: center; }
-                .balance { font-size: 3.5em; color: #10b981; font-weight: bold; margin: 20px 0; }
-                .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; max-width: 600px; margin: 20px auto; }
-                .stat-card { background: #1e293b; padding: 10px; border-radius: 10px; }
-                .stat-card h3 { font-size: 0.7em; color: #94a3b8; margin: 0; }
-                .stat-card p { font-size: 1.2em; margin: 5px 0 0 0; }
-                .container { max-width: 800px; margin: auto; }
-                canvas { background: #1e293b; padding: 15px; border-radius: 15px; }
+                body { background: #0f172a; color: white; font-family: sans-serif; text-align: center; padding: 20px; }
+                .balance { font-size: 3.5em; color: #10b981; font-weight: bold; }
+                .card { background: #1e293b; padding: 20px; border-radius: 15px; max-width: 700px; margin: 20px auto; }
+                .stat { color: #94a3b8; font-size: 0.8em; margin: 5px; }
             </style>
         </head>
         <body>
-            <div class="container">
-                <p style="color: #94a3b8; letter-spacing: 2px;">WEATHERTRADER QUANT V3.3</p>
-                <div class="balance">$196.70</div>
-                
-                <canvas id="chart"></canvas>
-                <p style="color: #64748b; font-size: 0.8em; margin-top: 20px;">Protect Limit: $150.0 | Trades: 0</p>
+            <p>WEATHERTRADER QUANT V3.4</p>
+            <div class="balance">$196.70</div>
+            <div class="card">
+                <canvas id="c"></canvas>
             </div>
+            <div class="stat">Max Drawdown: 0.00% | Peak: $196.70</div>
             <script>
-                new Chart(document.getElementById('chart'), {
+                new Chart(document.getElementById('c'), {
                     type: 'line',
-                    data: { labels: ["13:36", "13:36", "13:43", "13:45", "13:50", "13:55", "13:56", "14:09", "14:20", "14:39", "15:35", "16:48", "17:37", "18:52", "19:25", "19:28", "19:42", "20:40", "21:33", "22:41", "23:35", "00:56", "01:54", "02:21", "02:27", "02:33", "02:47"], 
-                    datasets: [{ data: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 58.0, 66.0, 74.0, 82.0, 90.0, 98.0, 106.0, 165.70741445897264, 191.33276554068402, 196.7006221729811, 196.7006221729811, 196.7006221729811, 196.7006221729811], borderColor: '#10b981', borderWidth: 3, tension: 0.4, pointRadius: 0, fill: false }] },
-                    options: { plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { grid: { color: '#334155' } } } }
+                    data: { labels: ["13:36", "13:36", "13:43", "13:45", "13:50", "13:55", "13:56", "14:09", "14:20", "14:39", "15:35", "16:48", "17:37", "18:52", "19:25", "19:28", "19:42", "20:40", "21:33", "22:41", "23:35", "00:56", "01:54", "02:21", "02:27", "02:33", "02:47", "02:58"], 
+                    datasets: [{ data: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 58.0, 66.0, 74.0, 82.0, 90.0, 98.0, 106.0, 165.70741445897264, 191.33276554068402, 196.7006221729811, 196.7006221729811, 196.7006221729811, 196.7006221729811, 196.7006221729811], borderColor: '#10b981', tension: 0.4, pointRadius: 0, fill: false }] },
+                    options: { plugins: { legend: { display: false } }, scales: { x: { display: false } } }
                 });
             </script>
         </body>
