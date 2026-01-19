@@ -7,22 +7,25 @@
                 body { background: #0f172a; color: white; font-family: sans-serif; text-align: center; padding: 20px; }
                 .balance { font-size: 3.5em; color: #10b981; font-weight: bold; }
                 .container { max-width: 800px; margin: auto; background: #1e293b; padding: 20px; border-radius: 20px; }
-                .stats { color: #94a3b8; font-size: 0.8em; margin-top: 10px; }
+                .stats { color: #94a3b8; font-size: 0.9em; margin-top: 15px; display: flex; justify-content: space-around; border-top: 1px solid #334155; padding-top: 15px; }
             </style>
         </head>
         <body>
             <div class="container">
-                <p>WEATHERTRADER V3.7 (SCIENTIFIC VALIDATION)</p>
+                <p>WEATHERTRADER QUANT v4.4</p>
                 <div class="balance">$196.70</div>
                 <canvas id="c"></canvas>
-                <div class="stats">Max DD: 0.00% | Mode: PAPER</div>
+                <div class="stats">
+                    <span>En Riesgo: $0.00</span>
+                    <span>Pendientes: 0</span>
+                </div>
             </div>
             <script>
                 new Chart(document.getElementById('c'), {
                     type: 'line',
-                    data: { labels: ["13:36", "13:36", "13:43", "13:45", "13:50", "13:55", "13:56", "14:09", "14:20", "14:39", "15:35", "16:48", "17:37", "18:52", "19:25", "19:28", "19:42", "20:40", "21:33", "22:41", "23:35", "00:56", "01:54", "02:21", "02:27", "02:33", "02:47", "02:58", "03:06", "03:23", "04:19"], 
-                    datasets: [{ data: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 58.0, 66.0, 74.0, 82.0, 90.0, 98.0, 106.0, 165.70741445897264, 191.33276554068402, 196.7006221729811, 196.7006221729811, 196.7006221729811, 196.7006221729811, 196.7006221729811, 196.7006221729811, 196.7006221729811, 196.7006221729811], borderColor: '#10b981', tension: 0.3, pointRadius: 0, fill: false }] },
-                    options: { plugins: { legend: { display: false } }, scales: { x: { display: false } } }
+                    data: { labels: ["13:36", "13:36", "13:43", "13:45", "13:50", "13:55", "13:56", "14:09", "14:20", "14:39", "15:35", "16:48", "17:37", "18:52", "19:25", "19:28", "19:42", "20:40", "21:33", "22:41", "23:35", "00:56", "01:54", "02:21", "02:27", "02:33", "02:47", "02:58", "03:06", "03:23", "04:19", "19/01"], 
+                    datasets: [{ data: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 58.0, 66.0, 74.0, 82.0, 90.0, 98.0, 106.0, 165.70741445897264, 191.33276554068402, 196.7006221729811, 196.7006221729811, 196.7006221729811, 196.7006221729811, 196.7006221729811, 196.7006221729811, 196.7006221729811, 196.7006221729811, 196.7006221729811], borderColor: '#10b981', borderWidth: 3, tension: 0.3, pointRadius: 0, fill: false }] },
+                    options: { plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { grid: { color: '#334155' } } } }
                 });
             </script>
         </body>
