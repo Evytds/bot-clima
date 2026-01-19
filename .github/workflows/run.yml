@@ -2,14 +2,15 @@ name: Run Weather Bot
 
 on:
   schedule:
-    - cron: '0 * * * *' # Ejecutar cada hora automáticamente
-  workflow_dispatch:   # Permite el botón manual "Run Workflow"
+    # ⏱️ CAMBIO: Ejecutar cada 30 minutos
+    - cron: '*/30 * * * *'
+  workflow_dispatch:   # Botón manual
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Permiso crucial para guardar los JSON y PNG
+      contents: write # Permiso vital para guardar
 
     steps:
       - name: Checkout code
@@ -33,14 +34,14 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Añadir cambios de manera segura
+          # Agregamos los archivos de datos y reportes
           git add *.json || true
           git add reports/ || true
           
-          # Commit solo si hay cambios
+          # Solo hacemos commit si hubo cambios reales
           if git diff --staged --quiet; then
             echo "No hay cambios en el balance o trades."
           else
-            git commit -m "🤖 Actualización automática: Balance y Trades"
+            git commit -m "🤖 Actualización automática: Balance y Trades (30 min)"
             git push
           fi
