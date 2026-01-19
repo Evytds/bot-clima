@@ -2,18 +2,14 @@ name: Run Weather Bot
 
 on:
   schedule:
-    # Se ejecuta automáticamente cada hora (al minuto 0)
-    - cron: '0 * * * *'
-  # Permite ejecutar el bot manualmente desde la pestaña 'Actions'
-  workflow_dispatch:
+    - cron: '0 * * * *' # Ejecutar cada hora automáticamente
+  workflow_dispatch:   # Permite el botón manual "Run Workflow"
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
-    # Permisos necesarios para que el bot pueda escribir cambios en el repositorio
     permissions:
-      contents: write
+      contents: write # Permiso crucial para guardar los JSON y PNG
 
     steps:
       - name: Checkout code
@@ -27,29 +23,24 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -r requirements.txt
 
       - name: Run bot
         run: python bot.py
 
       - name: Commit and push changes
         run: |
-          # Configuración de identidad de Git
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Agregamos archivos de forma segura para evitar errores de 'pathspec'
-          # El operador '|| true' evita que el proceso falle si no encuentra el archivo
+          # Añadir cambios de manera segura
           git add *.json || true
-          git add *.csv || true
+          git add reports/ || true
           
-          # Verificar si existe la carpeta de reportes generada por la versión 6.5.1
-          if [ -d "reports" ]; then git add reports/; fi
-          
-          # Solo realizar el commit y push si hay cambios reales detectados
+          # Commit solo si hay cambios
           if git diff --staged --quiet; then
-            echo "No se detectaron cambios en el balance o trades."
+            echo "No hay cambios en el balance o trades."
           else
-            git commit -m "🤖 Actualización automática: Balance y Analíticas"
+            git commit -m "🤖 Actualización automática: Balance y Trades"
             git push
           fi
