@@ -1,58 +1,23 @@
 
-        <!DOCTYPE html>
         <html>
         <head>
-            <title>Elite Math Simulator V2</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
             <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
             <style>
-                body { font-family: sans-serif; background: #0f172a; color: white; text-align: center; margin: 0; }
-                .container { width: 95%; max-width: 800px; margin: auto; padding: 20px; }
-                .balance { font-size: 4em; color: #10b981; font-weight: bold; margin: 10px 0; }
-                .card { background: #1e293b; padding: 20px; border-radius: 15px; margin-top: 20px; }
-                .city-tag { display: inline-block; background: #334155; padding: 5px 10px; border-radius: 5px; margin: 5px; font-size: 0.8em; color: #94a3b8; font-weight: bold; }
-                .stats { display: flex; justify-content: space-around; margin-top: 10px; color: #94a3b8; font-size: 0.9em; }
+                body { background: #0f172a; color: white; font-family: sans-serif; text-align: center; }
+                .balance { font-size: 4em; color: #10b981; font-weight: bold; }
+                .card { background: #1e293b; padding: 20px; border-radius: 15px; width: 80%; margin: 20px auto; }
             </style>
         </head>
         <body>
-            <div class="container">
-                <p style="color: #94a3b8;">CAPITAL NETO (POST-FEES)</p>
-                <div class="balance">$191.33</div>
-                
-                <div class="card">
-                    <canvas id="chart"></canvas>
-                </div>
-                
-                <div class="card">
-                    <p style="color: #94a3b8;">RADAR ACTIVO</p>
-                    <span class="city-tag">SEOUL</span><span class="city-tag">ATLANTA</span><span class="city-tag">DALLAS</span><span class="city-tag">SEATTLE</span><span class="city-tag">NYC</span><span class="city-tag">LONDON</span>
-                </div>
-
-                <div class="stats">
-                    <span>Fee: 2%</span>
-                    <span>Max Trades: 3/ciclo</span>
-                    <span>Kelly: 0.25</span>
-                </div>
-            </div>
+            <p>WEATHERTRADER V3.0 ENGINE</p>
+            <div class="balance">$196.70</div>
+            <div class="card"><canvas id="c"></canvas></div>
             <script>
-                new Chart(document.getElementById('chart'), {
+                new Chart(document.getElementById('c'), {
                     type: 'line',
-                    data: {
-                        labels: ["13:36", "13:36", "13:43", "13:45", "13:50", "13:55", "13:56", "14:09", "14:20", "14:39", "15:35", "16:48", "17:37", "18:52", "19:25", "19:28", "19:42", "20:40", "21:33", "22:41", "23:35", "00:56", "01:54"],
-                        datasets: [{
-                            label: 'Equity',
-                            data: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 58.0, 66.0, 74.0, 82.0, 90.0, 98.0, 106.0, 165.70741445897264, 191.33276554068402],
-                            borderColor: '#10b981',
-                            backgroundColor: 'rgba(125, 125, 125, 0.1)',
-                            fill: true,
-                            tension: 0.4,
-                            pointRadius: 0
-                        }]
-                    },
-                    options: { 
-                        plugins: { legend: { display: false } },
-                        scales: { x: { display: false }, y: { grid: { color: '#334155' } } }
-                    }
+                    data: { labels: ["13:36", "13:36", "13:43", "13:45", "13:50", "13:55", "13:56", "14:09", "14:20", "14:39", "15:35", "16:48", "17:37", "18:52", "19:25", "19:28", "19:42", "20:40", "21:33", "22:41", "23:35", "00:56", "01:54", "02:21"], 
+                    datasets: [{ data: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 58.0, 66.0, 74.0, 82.0, 90.0, 98.0, 106.0, 165.70741445897264, 191.33276554068402, 196.7006221729811], borderColor: '#10b981', tension: 0.4 }] },
+                    options: { plugins: { legend: { display: false } } }
                 });
             </script>
         </body>
