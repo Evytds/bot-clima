@@ -11,17 +11,17 @@ ARCHIVO_BILLETERA = "billetera_virtual.json"
 ARCHIVO_HISTORIAL = "historial_ganancias.csv"
 ARCHIVO_DASHBOARD = "index.html"
 
-# Parámetros Cuantitativos
-EDGE_THRESHOLD = 0.05      
-MAX_PCT_BY_TRADE = 0.02    
-COMISION_MERCADO = 0.02    
-STOP_LOSS_ABSOLUTO = 20.0  # Si bajamos de $20, el bot muere.
+# Parámetros Cuantitativos Profesionales
+EDGE_THRESHOLD = 0.05      # 5% de ventaja mínima
+MAX_PCT_BY_TRADE = 0.02    # Máximo 2% por trade
+COMISION_MERCADO = 0.02    # 2% de fee en ganancias
+MIN_VOLUMEN_USD = 5000     # Filtro de liquidez mínima
+STOP_LOSS_ABSOLUTO = 20.0  # Kill-switch
 
-class WeatherTraderV3_1:
+class WeatherTraderV3_2:
     def __init__(self):
         self.data = self._cargar_datos()
         self.ciudades = ["Seoul", "Atlanta", "Dallas", "Seattle", "New York", "London"]
-        # URL del Subgraph de Polymarket
         self.poly_url = "https://api.thegraph.com/subgraphs/name/polymarket/polymarket"
 
     def _cargar_datos(self):
@@ -35,8 +35,8 @@ class WeatherTraderV3_1:
         return {"balance": CAPITAL_INICIAL, "peak_balance": CAPITAL_INICIAL, "historial": []}
 
     def obtener_clima(self, ciudad):
-        # Simplificamos coordenadas para el ejemplo (Se podrían mapear en un dict)
-        coords = {"Seoul": (37.56, 126.97), "Atlanta": (33.74, -84.38), "Dallas": (32.77, -96.79)}
+        coords = {"Seoul": (37.56, 126.97), "Atlanta": (33.74, -84.38), "Dallas": (32.77, -96.79), 
+                  "Seattle": (47.60, -122.33), "New York": (40.71, -74.00), "London": (51.50, -0.12)}
         lat, lon = coords.get(ciudad, (40.71, -74.00))
         try:
             url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&daily=temperature_2m_max&timezone=auto&forecast_days=1"
@@ -45,7 +45,7 @@ class WeatherTraderV3_1:
         except: return None
 
     def obtener_precio_polymarket(self, ciudad):
-        """Consulta real al Subgraph de Polymarket"""
+        """Consulta Polymarket con filtro de liquidez absoluta"""
         try:
             query = """
             {
@@ -58,86 +58,94 @@ class WeatherTraderV3_1:
             """ % ciudad
             res = requests.post(self.poly_url, json={"query": query}).json()
             markets = res["data"]["markets"]
-            if not markets: return None
+            
+            # Filtro de volumen y existencia
+            valid_markets = [m for m in markets if float(m["volume"]) >= MIN_VOLUMEN_USD]
+            if not valid_markets: return None
 
-            # Seleccionamos el mercado con más volumen para asegurar liquidez
-            market = max(markets, key=lambda m: float(m["volume"]))
+            # Seleccionamos el más líquido
+            market = max(valid_markets, key=lambda m: float(m["volume"]))
             yes_price = next(float(o["price"]) for o in market["outcomes"] if o["name"] == "Yes")
             return yes_price
         except: return None
 
-    def calcular_ev_corregido(self, prob_real, precio_mercado, stake):
-        """
-        Cálculo de EV Neto: E = (P * Ganancia_Neta) - (Q * Stake)
-        Ganancia_Neta = ((Stake / Precio) - Stake) * (1 - Comisión)
-        """
-        p_ganar = prob_real
-        p_perder = 1 - prob_real
-        
-        ganancia_bruta = (stake / precio_mercado) - stake
-        ganancia_neta = ganancia_bruta * (1 - COMISION_MERCADO)
-        
-        ev = (p_ganar * ganancia_neta) - (p_perder * stake)
-        return ev
+    def calcular_prob_granular(self, temp):
+        """Modelo de probabilidad mejorado (Heurística de 4 niveles)"""
+        if temp > 38 or temp < -5: return 0.80
+        elif temp > 32 or temp < 5: return 0.70
+        elif temp > 28 or temp < 12: return 0.60
+        else: return 0.52
+
+    def calcular_ev_neto(self, prob, precio, stake):
+        p_ganar = prob
+        p_perder = 1 - prob
+        ganancia_neta = ((stake / precio) - stake) * (1 - COMISION_MERCADO)
+        return (p_ganar * ganancia_neta) - (p_perder * stake)
 
     def ejecutar_trade(self, ciudad):
-        precio_mkt = self.obtener_precio_polymarket(ciudad)
+        precio_yes = self.obtener_precio_polymarket(ciudad)
         temp = self.obtener_clima(ciudad)
         
-        if precio_mkt is None or temp is None: return
+        if precio_yes is None or temp is None: return
 
-        # Modelo Heurístico (Certeza basada en extremos)
-        prob_modelo = 0.75 if (temp > 32 or temp < 5) else 0.55
+        prob_modelo_yes = self.calcular_prob_granular(temp)
         
-        edge = prob_modelo - precio_mkt
+        # DETERMINACIÓN DE LADO (Lógica Simétrica)
+        # Si nuestra prob es mayor al precio, operamos YES. Si es menor, operamos NO.
+        if prob_modelo_yes > precio_yes:
+            lado, prob, precio = "YES", prob_modelo_yes, precio_yes
+        else:
+            lado, prob, precio = "NO", (1 - prob_modelo_yes), (1 - precio_yes)
+
+        edge = prob - precio
         
-        if abs(edge) > EDGE_THRESHOLD:
-            lado = "YES" if edge > 0 else "NO"
-            prob_final = prob_modelo if lado == "YES" else (1 - prob_modelo)
-            
-            # Position Sizing
-            stake = self.data["balance"] * min(abs(edge), MAX_PCT_BY_TRADE)
-            
+        if edge > EDGE_THRESHOLD:
+            # Position Sizing: 2% Cap
+            stake = self.data["balance"] * min(edge, MAX_PCT_BY_TRADE)
             if stake < 1.0: return
 
-            ev_neto = self.calcular_ev_corregido(prob_final, precio_mkt, stake)
-            
-            # Solo ejecutamos si el EV neto sigue siendo positivo tras comisiones
-            if ev_neto <= 0: return
+            ev = self.calcular_ev_neto(prob, precio, stake)
+            if ev <= 0: return
 
-            # Simulación Monte Carlo (Paper Trading)
-            if random.random() < prob_final:
-                resultado_dinero = ((stake / precio_mkt) - stake) * (1 - COMISION_MERCADO)
-                tipo = "WIN"
+            # SIMULACIÓN CON RUIDO (Forecast Error)
+            # Añadimos un error gaussiano de 5% a la probabilidad real
+            prob_simulada = max(0.01, min(0.99, random.gauss(prob, 0.05)))
+            
+            if random.random() < prob_simulada:
+                resultado_dinero = ((stake / precio) - stake) * (1 - COMISION_MERCADO)
+                res_str = "WIN"
             else:
                 resultado_dinero = -stake
-                tipo = "LOSS"
+                res_str = "LOSS"
 
+            # Actualización de Balance y Peak
             self.data["balance"] += resultado_dinero
-            # Actualizar Peak para Drawdown
             if self.data["balance"] > self.data["peak_balance"]:
                 self.data["peak_balance"] = self.data["balance"]
 
-            print(f"📡 {ciudad} ({lado}) | Edge: {edge:.2%} | EV Neto: ${ev_neto:.2f} | {tipo}: ${resultado_dinero:.2f}")
+            print(f"📊 {ciudad} ({lado}) | Edge: {edge:.2%} | EV: ${ev:.2f} | {res_str}: ${resultado_dinero:.2f}")
             
             with open(ARCHIVO_HISTORIAL, 'a', encoding='utf-8') as f:
-                f.write(f"{datetime.now()},{ciudad},{prob_final:.2f},{precio_mkt:.2f},{ev_neto:.2f},{resultado_dinero:.2f}\n")
+                f.write(f"{datetime.now()},{ciudad},{lado},{prob:.2f},{precio:.2f},{edge:.2f},{stake:.2f},{ev:.2f},{resultado_dinero:.2f}\n")
 
     def ejecutar(self):
-        if self.data["balance"] < STOP_LOSS_ABSOLUTO:
-            print("🛑 Kill-switch activado. Saldo insuficiente.")
-            return
+        if self.data["balance"] < STOP_LOSS_ABSOLUTO: return
 
-        for ciudad in self.ciudades:
+        # Barajamos ciudades para evitar sesgo de ejecución
+        ciudades_shuffled = self.ciudades.copy()
+        random.shuffle(ciudades_shuffled)
+
+        for ciudad in ciudades_shuffled:
             self.ejecutar_trade(ciudad)
 
-        # Drawdown actual
+        # Cálculo de Drawdown
         dd = (self.data["peak_balance"] - self.data["balance"]) / self.data["peak_balance"]
         
         self.data["historial"].append({"fecha": datetime.now().strftime("%H:%M"), "balance": self.data["balance"]})
         self.data["historial"] = self.data["historial"][-50:]
         with open(ARCHIVO_BILLETERA, 'w') as f: json.dump(self.data, f)
-        print(f"✅ Ciclo Terminado. Balance: ${self.data['balance']:.2f} | Max DD: {dd:.2%}")
+        
+        print(f"✅ Balance: ${self.data['balance']:.2f} | Peak: ${self.data['peak_balance']:.2f} | DD: {dd:.2%}")
 
 if __name__ == "__main__":
-    WeatherTraderV3_1().ejecutar()
+    WeatherTraderV3_2().ejecutar()
