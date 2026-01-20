@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# Configuración gráfica para servidores (Obligatorio en GitHub)
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -17,14 +16,14 @@ import numpy as np
 # ==========================
 #        CONFIGURACIÓN
 # ==========================
-VERSION = "6.5.9-GITHUB_MASTER"
+VERSION = "6.7.0-HIGH_VOLUME"
 print(f"🚀 [INIT] WeatherTrader {VERSION} | {datetime.now().strftime('%H:%M:%S')}")
 
 CAPITAL_INICIAL = 196.70
-EDGE_THRESHOLD_BASE = 0.07      # 7% de ventaja mínima
-MAX_EVENT_EXPOSURE = 0.03       # 3% por trade
-MAX_CLUSTER_EXPOSURE = 0.08     # 8% riesgo total
-KELLY_FRACTION_BASE = 0.25      
+EDGE_THRESHOLD_BASE = 0.05      # ⚡ Bajado al 5% para capturar más oportunidades
+MAX_EVENT_EXPOSURE = 0.03       # 3% máximo por cada ciudad
+MAX_CLUSTER_EXPOSURE = 0.15     # ⚡ Aumentado al 15% para permitir más trades simultáneos
+KELLY_FRACTION_BASE = 0.20      # Fracción de Kelly ajustada para el nuevo volumen
 COMISION_GANANCIA = 0.02        
 
 GAMMA_API_URL = "https://gamma-api.polymarket.com/markets"
@@ -34,14 +33,23 @@ class WeatherTraderLive:
         self.session = self._configurar_sesion()
         self.data = self._cargar_datos()
         self.pendientes = self._cargar_pendientes()
+        
+        # 🌍 Panel ampliado a 12 ciudades para mayor frecuencia de trading
         self.ciudades_config = {
             "Seoul": {"lat": 37.56, "lon": 126.97},
             "Atlanta": {"lat": 33.74, "lon": -84.38},
             "Dallas": {"lat": 32.77, "lon": -96.79},
             "Seattle": {"lat": 47.60, "lon": -122.33},
             "New York": {"lat": 40.71, "lon": -74.00},
-            "London": {"lat": 51.50, "lon": -0.12}
+            "London": {"lat": 51.50, "lon": -0.12},
+            "Toronto": {"lat": 43.65, "lon": -79.38},
+            "Buenos Aires": {"lat": -34.60, "lon": -58.38},
+            "Chicago": {"lat": 41.87, "lon": -87.62},
+            "Los Angeles": {"lat": 34.05, "lon": -118.24},
+            "Tokyo": {"lat": 35.68, "lon": 139.76},
+            "Sydney": {"lat": -33.86, "lon": 151.20}
         }
+        
         if not os.path.exists("reports"):
             os.makedirs("reports")
 
@@ -139,7 +147,6 @@ class WeatherTraderLive:
             plt.savefig(f"reports/status_{ts}.png")
             plt.close()
             
-            # Limpieza: Solo guarda las últimas 5 imágenes
             files = sorted([os.path.join("reports", f) for f in os.listdir("reports") if f.endswith(".png")])
             if len(files) > 5: os.remove(files[0])
         except: pass
@@ -203,18 +210,12 @@ class WeatherTraderLive:
         except Exception as e:
             print(f"⚠️ Error {ciudad}: {e}")
 
-    # === MÉTODO DE EJECUCIÓN ÚNICA (OBLIGATORIO PARA GITHUB) ===
     def ejecutar_ciclo_unico(self):
         print("⚙️ Ejecutando análisis de mercado (Ciclo Único)...")
-        
-        # 1. Resolver pendientes
         self.resolver_mercados()
-        
-        # 2. Escanear
         for ciudad, config in self.ciudades_config.items():
             self.escanear_mercado(ciudad, config)
-            
-        # 3. Guardar historial
+        
         self.data["historial"].append({
             "fecha": datetime.now().strftime("%d/%m %H:%M"),
             "balance": self.data["balance"]
@@ -222,12 +223,9 @@ class WeatherTraderLive:
         if self.data["balance"] > self.data["peak_balance"]:
             self.data["peak_balance"] = self.data["balance"]
             
-        # 4. Generar reportes y guardar
         self.generar_reporte()
         self.guardar_estado()
-        
         print(f"✅ Ciclo finalizado exitosamente | Balance: ${self.data['balance']:.2f}")
 
 if __name__ == "__main__":
-    # Ejecutamos SOLO una vez y salimos
     WeatherTraderLive().ejecutar_ciclo_unico()
