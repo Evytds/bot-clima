@@ -1,250 +1,135 @@
 import requests
 import json
 import os
-import re
-import math
 from datetime import datetime, timedelta
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
 # ==========================
-# CONFIGURACIÓN MAESTRA
-# ==========================
-VERSION = "7.3-SMART-LIQUIDITY+"
+VERSION = "9.0-CLIMATE-OPTIMIZED"
 CAPITAL_INICIAL = 196.70
 
-EDGE_THRESHOLD = 0.04
-MAX_POSITION_PCT = 0.03
-MAX_OPEN_TRADES = 6
+EDGE_BASE = 0.02
+EDGE_LATE = 0.008
+MAX_POSITION_PCT = 0.02
+MAX_OPEN_TRADES = 12
 COMISION = 0.02
-MIN_LIQUIDITY_REQUIRED = 1000
+MIN_LIQUIDITY = 400
 
-MIN_PRICE = 0.05   # ⬅️ NUEVO: evita mercados mal puestos
-MAX_PRICE = 0.95   # ⬅️ NUEVO
+CITIES = [
+    "New York","Toronto","London","Seoul","Atlanta","Dallas",
+    "Seattle","Buenos Aires","Chicago","Los Angeles","Tokyo","Sydney"
+]
 
 GAMMA_API = "https://gamma-api.polymarket.com/markets"
 
-CIUDADES = {
-    "New York": {"lat": 40.71, "lon": -74.00},
-    "Toronto": {"lat": 43.65, "lon": -79.38},
-    "London": {"lat": 51.50, "lon": -0.12},
-    "Seoul": {"lat": 37.56, "lon": 126.97},
-    "Atlanta": {"lat": 33.74, "lon": -84.38},
-    "Dallas": {"lat": 32.77, "lon": -96.79},
-    "Seattle": {"lat": 47.60, "lon": -122.33},
-    "Buenos Aires": {"lat": -34.60, "lon": -58.38},
-    "Chicago": {"lat": 41.87, "lon": -87.62},
-    "Los Angeles": {"lat": 34.05, "lon": -118.24},
-    "Tokyo": {"lat": 35.68, "lon": 139.76},
-    "Sydney": {"lat": -33.86, "lon": 151.20}
-}
-
-class WeatherTraderPro:
+# ==========================
+class ClimateTraderOptimized:
     def __init__(self):
-        self.session = self._config_session()
+        self.session = self._session()
         self.state = self._load_state()
-        os.makedirs("reports", exist_ok=True)
-        print(f"🚀 {VERSION} | Balance: ${self.state['balance']:.2f}")
+        print(f"🚀 {VERSION} | Balance ${self.state['balance']:.2f}")
 
-    def _config_session(self):
+    def _session(self):
         s = requests.Session()
-        retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+        retries = Retry(total=3, backoff_factor=1,
+                        status_forcelist=[429,500,502,503,504])
         s.mount("https://", HTTPAdapter(max_retries=retries))
         return s
 
     def _load_state(self):
         if os.path.exists("state.json"):
-            with open("state.json", "r") as f:
+            with open("state.json","r") as f:
                 return json.load(f)
         return {"balance": CAPITAL_INICIAL, "open_trades": {}, "history": []}
 
     def _save_state(self):
-        with open("state.json", "w") as f:
+        with open("state.json","w") as f:
             json.dump(self.state, f, indent=2)
 
-    def forecast_temp(self, lat, lon):
-        try:
-            r = self.session.get(
-                "https://api.open-meteo.com/v1/forecast",
-                params={
-                    "latitude": lat,
-                    "longitude": lon,
-                    "daily": "temperature_2m_max",
-                    "timezone": "auto",
-                    "forecast_days": 1
-                },
-                timeout=15
-            ).json()
-            return r["daily"]["temperature_2m_max"][0]
-        except:
-            return None
-
-    def sigma_temp(self, lat, lon):
-        try:
-            end = datetime.now() - timedelta(days=1)
-            start = end - timedelta(days=30)
-            r = self.session.get(
-                "https://archive-api.open-meteo.com/v1/archive",
-                params={
-                    "latitude": lat,
-                    "longitude": lon,
-                    "start_date": start.strftime("%Y-%m-%d"),
-                    "end_date": end.strftime("%Y-%m-%d"),
-                    "daily": "temperature_2m_max",
-                    "timezone": "auto"
-                },
-                timeout=15
-            ).json()
-            temps = r["daily"]["temperature_2m_max"]
-            mean = sum(temps) / len(temps)
-            var = sum((t - mean) ** 2 for t in temps) / len(temps)
-            return max(0.7, math.sqrt(var))
-        except:
-            return 1.5
-
+    # ==========================
     def resolve_trades(self):
-        hoy = datetime.now().strftime("%Y-%m-%d")
         activos = {}
-
         for m_id, t in self.state["open_trades"].items():
-            if t["expiry"] < hoy:
-                try:
-                    r = self.session.get(
-                        "https://archive-api.open-meteo.com/v1/archive",
-                        params={
-                            "latitude": t["lat"],
-                            "longitude": t["lon"],
-                            "start_date": t["expiry"],
-                            "end_date": t["expiry"],
-                            "daily": "temperature_2m_max",
-                            "timezone": "auto"
-                        }
-                    ).json()
-
-                    temp_real = r.get("daily", {}).get("temperature_2m_max", [None])[0]
-
-                    if temp_real is not None:
-                        win_event = (temp_real > t["threshold"]) if t["op"] == ">" else (temp_real < t["threshold"])
-                        success = (t["side"] == "YES" and win_event) or (t["side"] == "NO" and not win_event)
-
-                        if success:
-                            self.state["balance"] += t["stake"] + t["win_neto"]
-                            print(f"💰 {t['city']} GANADO | +${t['win_neto']:.2f}")
-                        else:
-                            print(f"❌ {t['city']} PERDIDO | -${t['stake']:.2f}")
+            try:
+                r = self.session.get(f"{GAMMA_API}/{m_id}", timeout=10).json()
+                if r.get("closed"):
+                    win = "YES" if r.get("winnerOutcomeIndex") == "0" else "NO"
+                    if t["side"] == win:
+                        payout = t["stake"] + t["net"]
+                        self.state["balance"] += payout
+                        print(f"💰 WIN {t['city']} +${t['net']:.2f}")
                     else:
-                        activos[m_id] = t
-                except:
+                        print(f"❌ LOSS {t['city']} -${t['stake']:.2f}")
+                else:
                     activos[m_id] = t
-            else:
+            except:
                 activos[m_id] = t
-
         self.state["open_trades"] = activos
 
-    def scan_markets(self):
-        print(f"🔍 Escaneando {len(CIUDADES)} ciudades | Edge mínimo: {EDGE_THRESHOLD*100:.1f}%")
-
-        for city, cfg in CIUDADES.items():
+    # ==========================
+    def scan(self):
+        for city in CITIES:
             if len(self.state["open_trades"]) >= MAX_OPEN_TRADES:
                 break
-
-            if any(t["city"] == city for t in self.state["open_trades"].values()):
-                continue
-
-            forecast = self.forecast_temp(cfg["lat"], cfg["lon"])
-            sigma = self.sigma_temp(cfg["lat"], cfg["lon"])
-
-            if forecast is None:
-                continue
 
             try:
                 markets = self.session.get(
                     GAMMA_API,
-                    params={"active": "true", "query": city, "limit": 10},
+                    params={"active":"true","query":city,"limit":30},
                     timeout=15
                 ).json()
 
-                best_edge = 0
-                reason = "Sin edge válido"
-
                 for m in markets:
-                    q = m.get("question", "").lower()
-                    match = re.search(r"([-+]?\d*\.?\d+)", q)
-                    if not match:
+                    if m["id"] in self.state["open_trades"]:
+                        continue
+                    if float(m.get("liquidity",0)) < MIN_LIQUIDITY:
                         continue
 
-                    threshold = float(match.group(1))
-                    op = "<" if any(w in q for w in ["below", "under", "less"]) else ">"
+                    end = datetime.fromisoformat(m["endDate"].replace("Z",""))
+                    hours_left = (end - datetime.utcnow()).total_seconds() / 3600
+                    if hours_left > 48:
+                        continue
 
                     prices = json.loads(m["outcomePrices"])
                     p_yes, p_no = float(prices[0]), float(prices[1])
-                    liquidity = float(m.get("liquidity", 0))
-
-                    if not (MIN_PRICE <= p_yes <= MAX_PRICE and MIN_PRICE <= p_no <= MAX_PRICE):
+                    if not (0.05 < p_yes < 0.95):
                         continue
 
-                    z = (forecast - threshold) / sigma
-                    prob_gt = 0.5 * (1 + math.erf(z / math.sqrt(2)))
-                    prob_yes = prob_gt if op == ">" else 1 - prob_gt
-
-                    edge_yes = prob_yes - p_yes
-                    edge_no = (1 - prob_yes) - p_no
-                    current_edge = max(edge_yes, edge_no)
-
-                    if current_edge > 0.95:
+                    edge = abs(1 - (p_yes + p_no))
+                    edge_req = EDGE_LATE if hours_left < 24 else EDGE_BASE
+                    if edge < edge_req:
                         continue
 
-                    if current_edge > best_edge:
-                        best_edge = current_edge
-                        reason = f"Edge {current_edge:.1%}, liq ${liquidity:.0f}"
+                    side = "YES" if p_yes < 0.5 else "NO"
+                    price = p_yes if side == "YES" else p_no
 
-                    if current_edge > EDGE_THRESHOLD and liquidity >= MIN_LIQUIDITY_REQUIRED:
-                        side = "YES" if edge_yes > edge_no else "NO"
-                        price = p_yes if side == "YES" else p_no
-                        stake = round(self.state["balance"] * MAX_POSITION_PCT, 2)
+                    stake_pct = MAX_POSITION_PCT * min(edge / EDGE_BASE, 1.2)
+                    stake = round(self.state["balance"] * stake_pct, 2)
+                    if stake < 0.5:
+                        continue
 
-                        self.state["balance"] -= stake
-                        self.state["open_trades"][m["id"]] = {
-                            "city": city,
-                            "side": side,
-                            "stake": stake,
-                            "threshold": threshold,
-                            "op": op,
-                            "expiry": m["endDate"].split("T")[0],
-                            "lat": cfg["lat"],
-                            "lon": cfg["lon"],
-                            "win_neto": round((stake / price - stake) * (1 - COMISION), 2)
-                        }
+                    self.state["balance"] -= stake
+                    self.state["open_trades"][m["id"]] = {
+                        "city": city,
+                        "side": side,
+                        "stake": stake,
+                        "net": round((stake / price - stake) * (1 - COMISION), 2)
+                    }
 
-                        print(f"🎯 TRADE | {city} | {side} | Edge {current_edge:.1%} | Liq ${liquidity:.0f}")
-                        break
+                    print(f"🎯 {city} {side} | Edge {edge*100:.2f}% | ${stake}")
+                    break
 
-                print(f"   [✓] {city.ljust(12)} | {reason}")
-
-            except:
-                continue
-
-    def report(self):
-        self.state["history"].append(self.state["balance"])
-
-        if len(self.state["history"]) > 5:
-            plt.figure(figsize=(10, 5))
-            plt.plot(self.state["history"], lw=2)
-            plt.title(f"Equity Curve | ${self.state['balance']:.2f}")
-            plt.grid(alpha=0.3)
-            plt.savefig("reports/equity.png")
-            plt.close()
+            except Exception as e:
+                print(f"⚠️ {city} error")
 
     def run(self):
         self.resolve_trades()
-        self.scan_markets()
-        self.report()
+        self.scan()
+        self.state["history"].append(round(self.state["balance"],2))
         self._save_state()
-        print(f"✅ Ciclo finalizado | Balance: ${self.state['balance']:.2f}")
+        print(f"✅ Balance ${self.state['balance']:.2f}")
 
+# ==========================
 if __name__ == "__main__":
-    WeatherTraderPro().run()
+    ClimateTraderOptimized().run()
