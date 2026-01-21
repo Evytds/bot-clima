@@ -12,9 +12,9 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # ==========================
-# CONFIGURACIÓN GENERAL - BOT METEO MEJORADO CON PRONÓSTICOS Y ALERTS
+# CONFIGURACIÓN GENERAL - BOT METEO PRO CON FORECAST (OPENWEATHER + WTTR FALLBACK)
 # ==========================
-VERSION = "10.0-FULL-INTEGRATED-METEO-BOT"
+VERSION = "10.2-WTTR-FALLBACK-PRO-METEO-BOT"
 
 CAPITAL_INICIAL = 40.00
 
@@ -27,24 +27,23 @@ MIN_LIQUIDITY = 50
 
 GAMMA_API = "https://gamma-api.polymarket.com/markets"
 
-# OpenWeatherMap (gratis: openweathermap.org/api)
-OPENWEATHER_API_KEY = "your_openweather_api_key_here"  # ¡REEMPLAZA CON TU CLAVE GRATIS!
-OPENWEATHER_CURRENT = "https://api.openweathermap.org/data/2.5/weather"
+# OpenWeatherMap (TU KEY YA ACTIVA!)
+OPENWEATHER_API_KEY = "25ed3ded0753b35ae362ac1d888b0528"  # ¡TU KEY ACTIVE! Cambia si regeneras
 OPENWEATHER_FORECAST = "https://api.openweathermap.org/data/2.5/forecast"
 
-# Email alerts (Gmail: usa App Password en https://myaccount.google.com/apppasswords)
+# Email alerts (opcional)
 EMAIL_SENDER = "your_email@gmail.com"
 EMAIL_PASSWORD = "your_app_password"
 EMAIL_RECIPIENT = "your_email@gmail.com"
-ENABLE_EMAIL_ALERTS = False  # Cambia a True y configura para alerts
+ENABLE_EMAIL_ALERTS = False
 
-# Opciones avanzadas
-ENABLE_FORECAST = True  # Usa pronósticos para filtrar trades
-ENABLE_DIVERSIFICATION = False  # Escanea politics/crypto si True
-BACKTEST_MODE = False  # Futuro: simula histórico (por ahora False)
-CYCLE_SLEEP = 300  # 5 min entre ciclos en prod (ajusta)
+# Opciones
+ENABLE_FORECAST = True  # Siempre ON (fallback wttr.in si OpenWeather falla)
+ENABLE_DIVERSIFICATION = False
+BACKTEST_MODE = False  # True=10 ciclos finitos
+CYCLE_SLEEP = 60  # Segundos (60=test, 300=prod)
 
-# Ciudades priorizadas (con mapping para OpenWeather)
+# Ciudades (mapping OpenWeather/wttr.in)
 CITIES = {
     "New York": "New York,US",
     "New York City": "New York,US",
@@ -64,8 +63,9 @@ CITIES = {
     "San Francisco": "San Francisco,US"
 }
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s', handlers=[logging.FileHandler('bot.log'), logging.StreamHandler()])
+# Logging (consola + bot.log)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s', 
+                    handlers=[logging.FileHandler('bot.log'), logging.StreamHandler()])
 logger = logging.getLogger(__name__)
 
 # ==========================
@@ -88,7 +88,10 @@ class PolyWeatherBot:
         if os.path.exists("state.json"):
             try:
                 with open("state.json", "r") as f:
-                    return json.load(f)
+                    loaded = json.load(f)
+                    if 'balance' not in loaded or not isinstance(loaded['balance'], (int, float)):
+                        raise ValueError("Balance inválido")
+                    return loaded
             except Exception as e:
                 logger.warning(f"state.json corrupto ({e}) — reiniciando")
         return {
@@ -127,71 +130,82 @@ class PolyWeatherBot:
             logger.error(f"Error email: {e}")
 
     def _get_weather_forecast(self, city_ow):
-        """Obtiene temp max pronosticada para mañana (proxy para daily high) en °F"""
-        if not ENABLE_FORECAST or not OPENWEATHER_API_KEY or OPENWEATHER_API_KEY == "your_openweather_api_key_here":
-            logger.warning("Forecast deshabilitado (sin API key)")
-            return None
+        """Forecast PRO: OpenWeather (tu key) → wttr.in fallback (siempre gratis)"""
+        # TRY 1: OpenWeather (prioridad)
+        if OPENWEATHER_API_KEY != "your_openweather_api_key_here":
+            try:
+                tomorrow = (datetime.utcnow() + timedelta(days=1)).strftime('%Y-%m-%d')
+                url = f"{OPENWEATHER_FORECAST}?q={city_ow}&appid={OPENWEATHER_API_KEY}&units=imperial&cnt=8"
+                r = self.session.get(url, timeout=10).json()
+                highs = [f['main']['temp_max'] for f in r.get('list', []) 
+                         if 'dt_txt' in f and tomorrow in f['dt_txt']]
+                if highs:
+                    temp = max(highs)
+                    logger.info(f"🌦️ OpenWeather OK {city_ow}: {temp:.1f}°F")
+                    return temp
+            except Exception as e:
+                logger.warning(f"OpenWeather fail ({e}) → wttr.in fallback")
+
+        # TRY 2: wttr.in (ILIMITADO GRATIS, no key)
         try:
-            # Pronóstico 5 días, toma max de mañana ~12-15 UTC
-            tomorrow = (datetime.utcnow() + timedelta(days=1)).strftime('%Y-%m-%d')
-            url = f"{OPENWEATHER_FORECAST}?q={city_ow}&appid={OPENWEATHER_API_KEY}&units=imperial&cnt=8"
+            city_simple = city_ow.split(',')[0].replace(' ', '+')  # "New+York"
+            url = f"https://wttr.in/{city_simple}?format=j1"
             r = self.session.get(url, timeout=10).json()
-            highs = [f['main']['temp_max'] for f in r['list'] if tomorrow in f['dt_txt']]
-            return max(highs) if highs else None
+            if 'forecast' in r and len(r['forecast']) > 1:
+                tomorrow_data = r['forecast'][1]
+                maxt = tomorrow_data.get('maxtempF') or tomorrow_data.get('tempF')
+                if maxt:
+                    temp = float(maxt)
+                    logger.info(f"🌦️ wttr.in OK {city_ow}: {temp:.1f}°F")
+                    return temp
         except Exception as e:
-            logger.warning(f"Error forecast {city_ow}: {e}")
-            return None
+            logger.warning(f"wttr.in fail ({e}) → No forecast")
+
+        logger.warning(f"No forecast para {city_ow}")
+        return None
 
     def parse_temp_expectation(self, question):
-        """Parsea expectativa de temp del mercado. Retorna (expected_temp/range_low, range_high, unit) o None"""
+        """Parsea temp expectativa del mercado"""
         q = question.lower()
-        # Detecta °F / °C
-        unit = 'f' if '°f' in q or 'fahrenheit' in q else 'c' if '°c' in q or 'celsius' in q else 'f'  # Default °F
-        # Extrae números (temps como 42, 42-43, above 50)
+        unit = 'f' if any(x in q for x in ['°f', 'fahrenheit']) else 'c' if any(x in q for x in ['°c', 'celsius']) else 'f'
         nums = re.findall(r'(\d+(?:\.\d+)?)', q)
         if not nums:
             return None
-        exp_low, exp_high = float(nums[0]), float(nums[0])
+        exp_low = float(nums[0])
+        exp_high = exp_low
         if len(nums) > 1:
             exp_high = float(nums[1])
-        # Clasifica: exact, range estrecha (<5°), above/below
-        is_exact_or_narrow = exp_high - exp_low < 5 or 'exact' in q or 'between' in q
-        is_above = 'above' in q or 'exceed' in q
+        is_narrow = exp_high - exp_low < 5 or any(k in q for k in ['exact', 'between'])
+        is_above = any(k in q for k in ['above', 'exceed'])
         is_below = 'below' in q
         return {
             "low": exp_low,
             "high": exp_high,
             "unit": unit,
-            "is_narrow": is_exact_or_narrow,
+            "is_narrow": is_narrow,
             "is_above": is_above,
             "is_below": is_below
         }
 
-    def has_forecast_edge(self, question, city_ow, forecast_temp):
-        """Decide si apostar NO basado en forecast vs expectativa"""
+    def has_forecast_edge(self, question, forecast_temp):
+        """¿Forecast favorece NO?"""
         if not forecast_temp:
             return False
         temp_exp = self.parse_temp_expectation(question)
         if not temp_exp:
             return False
         exp_low, exp_high = temp_exp['low'], temp_exp['high']
-        # Si narrow range y forecast fuera: fuerte NO
         if temp_exp['is_narrow'] and not (exp_low <= forecast_temp <= exp_high):
             return True
-        # Above: si forecast < low
         if temp_exp['is_above'] and forecast_temp < exp_low:
             return True
-        # Below: si forecast > high
         if temp_exp['is_below'] and forecast_temp > exp_high:
             return True
         return False
 
     def is_weather_market(self, question):
         q = question.lower()
-        keywords = [
-            "temperature", "temp", "degree", "°", "high", "max",
-            "above", "below", "reach", "exceed", "between", "exact"
-        ]
+        keywords = ["temperature", "temp", "degree", "°", "high", "max", "above", "below", "reach", "exceed", "between", "exact"]
         return any(k in q for k in keywords)
 
     def resolve_trades(self):
@@ -199,12 +213,12 @@ class PolyWeatherBot:
             return
         active = {}
         resolved = []
-        for mid, trade in self.state["open_trades"].items():
+        for mid, trade in list(self.state["open_trades"].items()):
             try:
                 r = self.session.get(f"{GAMMA_API}/{mid}", timeout=10).json()
-                if r.get("closed"):
+                if r.get("closed") is True:
                     winner_idx = r.get("winnerOutcomeIndex")
-                    winner_side = "YES" if winner_idx == 0 else "NO"
+                    winner_side = "YES" if str(winner_idx) == "0" else "NO"
                     self.state["total_trades"] += 1
                     if trade["side"] == winner_side:
                         win_amount = trade["stake"] / trade["price"]
@@ -219,15 +233,18 @@ class PolyWeatherBot:
                         msg = f"❌ LOSS {trade['city']}: -${trade['stake']:.2f}"
                         logger.info(msg)
                         resolved.append(msg)
+                    # Elimina resolved
+                    if mid in self.state["open_trades"]:
+                        del self.state["open_trades"][mid]
                 else:
                     active[mid] = trade
             except Exception as e:
                 logger.warning(f"Error resolve {mid}: {e}")
                 active[mid] = trade
-        self.state["open_trades"] = active
+        self.state["open_trades"].update(active)  # Actualiza con restantes
         if resolved:
             win_rate = self.state["wins"] / self.state["total_trades"] * 100 if self.state["total_trades"] else 0
-            roi = (self.state["balance"] - self.initial_balance) / self.initial_balance * 100
+            roi = (self.state["balance"] - self.initial_balance) / self.initial_balance * 100 if self.initial_balance else 0
             summary = f"Resueltos: {len(resolved)} | Win Rate: {win_rate:.1f}% | ROI: {roi:.1f}% | Balance: ${self.state['balance']:.2f}"
             logger.info(summary)
             self._send_email_alert("PolyWeatherBot: Trades Resueltos", "\n".join(resolved) + "\n" + summary)
@@ -237,38 +254,38 @@ class PolyWeatherBot:
         scanned = 0
         for city, city_ow in CITIES.items():
             if len(self.state["open_trades"]) >= MAX_OPEN_TRADES:
-                logger.warning("Límite trades abiertos")
+                logger.warning("Límite trades abiertos alcanzado")
                 break
             forecast_temp = self._get_weather_forecast(city_ow)
             try:
-                params = {"active": "true", "query": city, "limit": 30}
+                params = {"active": "true", "query": city, "limit": "30"}
                 markets = self.session.get(GAMMA_API, params=params, timeout=15).json()
                 for m in markets:
-                    mid = m["id"]
-                    if mid in self.state["open_trades"]:
+                    mid = m.get("id")
+                    if not mid or mid in self.state["open_trades"]:
                         continue
-                    if ENABLE_DIVERSIFICATION and not self.is_weather_market(m.get("question", "")):
-                        continue  # Solo weather por default
-                    question = m["question"]
-                    if not self.is_weather_market(question):
+                    question = m.get("question", "")
+                    if not ENABLE_DIVERSIFICATION and not self.is_weather_market(question):
                         continue
                     liquidity = float(m.get("liquidity", 0))
                     if liquidity < MIN_LIQUIDITY:
                         continue
-                    prices = json.loads(m.get("outcomePrices", "[]"))
+                    outcome_prices_str = m.get("outcomePrices", "[]")
+                    prices = json.loads(outcome_prices_str)
                     if len(prices) != 2:
                         continue
-                    p_yes, p_no = prices
+                    p_yes = float(prices[0])
+                    p_no = float(prices[1])
                     if not (0.01 < p_yes < 0.99 and 0.01 < p_no < 0.99):
                         continue
                     edge = abs(1 - (p_yes + p_no))
                     if edge < EDGE_MIN:
                         continue
 
-                    # Filtro forecast: solo NO si mismatch
-                    forecast_good_for_no = self.has_forecast_edge(question, city_ow, forecast_temp)
+                    # Decisión con forecast bias fuerte a NO
+                    forecast_good_for_no = self.has_forecast_edge(question, forecast_temp)
                     side, price = None, None
-                    if forecast_good_for_no and p_no < 0.60:
+                    if (forecast_good_for_no or p_no < p_yes) and p_no < 0.60:
                         side, price = "NO", p_no
                     elif p_yes < 0.60:
                         side, price = "YES", p_yes
@@ -277,7 +294,7 @@ class PolyWeatherBot:
                         continue
 
                     # Stake dinámico
-                    pct = min(MAX_POSITION_PCT_BASE + edge * 200, MAX_POSITION_PCT_MAX)  # Escala con edge
+                    pct = min(MAX_POSITION_PCT_BASE + (edge * 200), MAX_POSITION_PCT_MAX)
                     stake = round(self.state["balance"] * pct, 2)
                     if stake < 1.0:
                         continue
@@ -300,40 +317,46 @@ class PolyWeatherBot:
                     scanned += 1
                     break  # Uno por ciudad
             except Exception as e:
-                logger.error(f"Error {city}: {e}")
-        logger.info(f"Escaneados: {scanned} trades nuevos")
+                logger.error(f"Error scan {city}: {e}")
+        logger.info(f"Escaneo completo: {scanned} trades nuevos | Abiertos: {len(self.state['open_trades'])}")
 
     def run_cycle(self):
         self.resolve_trades()
         self.scan_markets()
         win_rate = self.state["wins"] / self.state["total_trades"] * 100 if self.state["total_trades"] else 0
-        roi = (self.state["balance"] - self.initial_balance) / self.initial_balance * 100
+        roi = (self.state["balance"] - self.initial_balance) / self.initial_balance * 100 if self.initial_balance else 0
         hist = {
-            "balance": self.state["balance"],
-            "win_rate": win_rate,
-            "roi": roi,
+            "balance": round(self.state["balance"], 2),
+            "win_rate": round(win_rate, 2),
+            "roi": round(roi, 2),
             "open_trades": len(self.state["open_trades"]),
             "timestamp": datetime.utcnow().isoformat()
         }
         self.state["history"].append(hist)
         self._save_state()
-        logger.info(f"✅ Ciclo OK | Balance: ${self.state['balance']:.2f} | ROI: {roi:.1f}% | Open: {len(self.state['open_trades'])}")
+        logger.info(f"✅ Ciclo OK | Balance: ${self.state['balance']:.2f} | Win Rate: {win_rate:.1f}% | ROI: {roi:.1f}% | Open: {len(self.state['open_trades'])}")
 
 # ==========================
-# MAIN - LOOP INFINITO O MÚLTIPLES CICLOS
+# MAIN - LOOP INFINITO/BACKTEST
 # ==========================
 if __name__ == "__main__":
     bot = PolyWeatherBot()
     try:
-        cycles = 10 if BACKTEST_MODE else float('inf')  # Infinito en prod
-        for i in range(cycles):
-            logger.info(f"\n--- Ciclo {i+1} ---")
+        infinite = not BACKTEST_MODE
+        counter = 0
+        num_cycles = 10 if BACKTEST_MODE else float('inf')
+        while infinite or counter < num_cycles:
+            logger.info(f"\n--- Ciclo {counter+1} ---")
             bot.run_cycle()
-            if i < cycles - 1:
-                time.sleep(CYCLE_SLEEP)
+            counter += 1
+            if not infinite and counter >= num_cycles:
+                break
+            time.sleep(CYCLE_SLEEP)
+        logger.info("🎉 Backtest/Pruebas completadas")
     except KeyboardInterrupt:
-        logger.info("🛑 Detenido por usuario")
-        bot._save_state()
+        logger.info("🛑 Detenido por usuario (Ctrl+C)")
     except Exception as e:
-        logger.error(f"Error fatal: {e}")
+        logger.error(f"❌ Error fatal: {e}", exc_info=True)
+    finally:
         bot._save_state()
+        logger.info("💾 State guardado. ¡Hasta la próxima!")
