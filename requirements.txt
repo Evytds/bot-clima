@@ -1,3 +1,5 @@
 requests
-matplotlib
-numpy
+json
+os
+datetime
+urllib3
