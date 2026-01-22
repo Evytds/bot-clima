@@ -1,20 +1,21 @@
 import requests
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+from urllib3.util.retry = Retry
+import time
 
 # ==========================
-# CONFIGURACIÓN GENERAL (usa environment variables para secrets)
+# CONFIG
 # ==========================
 VERSION = "9.1-POLY-WEATHER-LIVE-SCAN"
 CAPITAL_INICIAL = float(os.getenv('CAPITAL_INICIAL', 196.70))
-EDGE_MIN = float(os.getenv('EDGE_MIN', 0.0015)) # 0.15% → permite operar sin forzar
-MAX_POSITION_PCT = float(os.getenv('MAX_POSITION_PCT', 0.02)) # 2% por trade
+EDGE_MIN = float(os.getenv('EDGE_MIN', 0.0015))
+MAX_POSITION_PCT = float(os.getenv('MAX_POSITION_PCT', 0.02))
 MAX_OPEN_TRADES = int(os.getenv('MAX_OPEN_TRADES', 10))
 COMISION = float(os.getenv('COMISION', 0.02))
-MIN_LIQUIDITY = float(os.getenv('MIN_LIQUIDITY', 50)) # Clima suele tener liquidez baja
+MIN_LIQUIDITY = float(os.getenv('MIN_LIQUIDITY', 50))
 GAMMA_API = "https://gamma-api.polymarket.com/markets"
 CLOB_API = "https://clob.polymarket.com"
 CITIES = [
@@ -33,18 +34,12 @@ class PolyWeatherBot:
         self.state = self._load_state()
         print(f"🚀 {VERSION} | Balance simulado: ${self.state['balance']:.2f}")
 
-    # ---------- SESSION ----------
     def _session(self):
         s = requests.Session()
-        retries = Retry(
-            total=3,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504]
-        )
+        retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
         s.mount("https://", HTTPAdapter(max_retries=retries))
         return s
 
-    # ---------- STATE ----------
     def _load_state(self):
         if os.path.exists("state.json"):
             try:
@@ -62,20 +57,11 @@ class PolyWeatherBot:
         with open("state.json", "w") as f:
             json.dump(self.state, f, indent=2)
 
-    # ---------- FILTRO CLIMA ----------
     def is_weather_market(self, question):
         q = question.lower()
-        keywords = [
-            "temperature", "temp",
-            "degree", "degrees",
-            "°", "c", "f",
-            "above", "below",
-            "reach", "exceed",
-            "highest", "max"
-        ]
+        keywords = ["temperature", "temp", "degree", "degrees", "°", "c", "f", "above", "below", "reach", "exceed", "highest", "max"]
         return any(k in q for k in keywords)
 
-    # ---------- RESOLVER TRADES ----------
     def resolve_trades(self):
         if not self.state["open_trades"]:
             return
@@ -97,15 +83,12 @@ class PolyWeatherBot:
                 activos[market_id] = t
         self.state["open_trades"] = activos
 
-    # ---------- GET YES NO MID PRICES (CLOB for real prices) ----------
     def get_yes_no_mid(self, market):
         clob_tokens = json.loads(market.get("clobTokenIds", "[]"))
         if not clob_tokens or len(clob_tokens) != 2:
             return None, None
-        
-        yes_token = clob_tokens[0]  # YES
-        no_token = clob_tokens[1]  # NO
-        
+        yes_token = clob_tokens[0]
+        no_token = clob_tokens[1]
         def fetch_mid(token):
             try:
                 r = self.session.get(f"{CLOB_API}/midpoint?token_id={token}", timeout=8)
@@ -115,13 +98,10 @@ class PolyWeatherBot:
                     return float(mid_str) if mid_str else None
             except:
                 return None
-        
         p_yes = fetch_mid(yes_token)
         p_no = fetch_mid(no_token)
-        
         return p_yes, p_no
 
-    # ---------- ESCANEO ----------
     def scan_markets(self):
         print("🌦️ Escaneando Weather Session (Polymarket)...")
         for city in CITIES:
@@ -169,39 +149,32 @@ class PolyWeatherBot:
                         "net_win": round((stake / price - stake) * (1 - COMISION), 2),
                         "date": datetime.utcnow().isoformat()
                     }
-                    print(
-                        f"🎯 WEATHER TRADE | {city:<12} | {side} | "
-                        f"Price {price:.2f} | Edge {edge*100:.2f}% | Stake ${stake}"
-                    )
+                    print(f"🎯 WEATHER TRADE | {city:<12} | {side} | Price {price:.2f} | Edge {edge*100:.2f}% | Stake ${stake}")
                     break
             except Exception as e:
                 print(f"⚠️ Error en {city}: {e}")
 
-    # ---------- RUN ----------
     def run(self):
         self.resolve_trades()
         self.scan_markets()
-        self.state["history"].append(round(self.state["balance"], 2))
+        self.state["history"].append(round(self.state['balance'], 2))
         self._save_state()
         print(f"✅ Ciclo terminado | Balance: ${self.state['balance']:.2f}")
 
-# ==========================
-# BACKTEST
-# ==========================
     def backtest(self, start_date, end_date):
         current = datetime.strptime(start_date, "%Y-%m-%d")
         end = datetime.strptime(end_date, "%Y-%m-%d")
         while current <= end:
             print(f"📅 Backtest para {current.strftime('%Y-%m-%d')}")
-            self.scan_markets()  # Adaptar para historical si es posible
+            self.scan_markets()
             self.resolve_trades()
             current += timedelta(days=1)
-            time.sleep(1)  # Para no spamear
+            time.sleep(1) # Para no spamear
 
 # ==========================
 # MAIN
 # ==========================
 if __name__ == "__main__":
     bot = PolyWeatherBot()
-    bot.run()  # Para loop infinito: while True: bot.run(); time.sleep(600)
-    # Para backtest: bot.backtest("2025-01-01", "2026-01-01")
+    # bot.run()  # Para modo normal
+    bot.backtest("2025-01-01", "2026-01-01") # Para backtest, cambia fechas
