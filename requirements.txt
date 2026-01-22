@@ -1,5 +1,4 @@
 requests
-json
-os
-datetime
-urllib3
+python-dotenv
+scipy
+python-telegram-bot
