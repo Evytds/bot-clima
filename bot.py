@@ -172,7 +172,7 @@ class PolyWeatherBot:
             time.sleep(1)
 
 # ==========================
-# MAIN (loop infinito para 24/7)
+# MAIN (loop infinito para live 24/7)
 # ==========================
 if __name__ == "__main__":
     bot = PolyWeatherBot()
@@ -181,5 +181,5 @@ if __name__ == "__main__":
         print("⏳ Esperando 10 minutos para próximo ciclo...")
         time.sleep(600)  # 10 minutos
 
-    # Para backtest, comenta el loop y descomenta:
+    # Para backtest, comenta el while True y descomenta:
     # bot.backtest("2025-01-01", "2026-01-21")
