@@ -3,14 +3,14 @@ import json
 import os
 from datetime import datetime, timedelta
 from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry  # Corregido el import
+from urllib3.util.retry import Retry
 import time
 
 # ==========================
 # CONFIGURACIÓN GENERAL
 # ==========================
 VERSION = "9.1-POLY-WEATHER-LIVE-SCAN"
-CAPITAL_INICIAL = float(os.getenv('CAPITAL_INICIAL', 196.70))
+CAPITAL_INICIAL = float(os.getenv('CAPITAL_INICIAL', 40.00))  # Tu capital de prueba
 EDGE_MIN = float(os.getenv('EDGE_MIN', 0.0015))
 MAX_POSITION_PCT = float(os.getenv('MAX_POSITION_PCT', 0.02))
 MAX_OPEN_TRADES = int(os.getenv('MAX_OPEN_TRADES', 10))
@@ -159,7 +159,7 @@ class PolyWeatherBot:
         self.scan_markets()
         self.state["history"].append(round(self.state['balance'], 2))
         self._save_state()
-        print(f"✅ Ciclo terminado | Balance: ${self.state['balance']:.2f}")
+        print(f"✅ Ciclo terminado | Balance: ${self.state['balance']:.2f} | Hora: {datetime.utcnow().isoformat()}")
 
     def backtest(self, start_date, end_date):
         current = datetime.strptime(start_date, "%Y-%m-%d")
@@ -169,12 +169,17 @@ class PolyWeatherBot:
             self.scan_markets()
             self.resolve_trades()
             current += timedelta(days=1)
-            time.sleep(1)  # Para no spamear
+            time.sleep(1)
 
 # ==========================
-# MAIN
+# MAIN (loop infinito para 24/7)
 # ==========================
 if __name__ == "__main__":
     bot = PolyWeatherBot()
-    # bot.run()  # Modo normal (un ciclo)
-    bot.backtest("2025-01-01", "2026-01-21")  # Backtest (cambia fechas para probar)
+    while True:
+        bot.run()
+        print("⏳ Esperando 10 minutos para próximo ciclo...")
+        time.sleep(600)  # 10 minutos
+
+    # Para backtest, comenta el loop y descomenta:
+    # bot.backtest("2025-01-01", "2026-01-21")
