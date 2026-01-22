@@ -3,11 +3,11 @@ import json
 import os
 from datetime import datetime, timedelta
 from requests.adapters import HTTPAdapter
-from urllib3.util.retry = Retry
+from urllib3.util.retry import Retry  # Corregido el import
 import time
 
 # ==========================
-# CONFIG
+# CONFIGURACIÓN GENERAL
 # ==========================
 VERSION = "9.1-POLY-WEATHER-LIVE-SCAN"
 CAPITAL_INICIAL = float(os.getenv('CAPITAL_INICIAL', 196.70))
@@ -169,12 +169,12 @@ class PolyWeatherBot:
             self.scan_markets()
             self.resolve_trades()
             current += timedelta(days=1)
-            time.sleep(1) # Para no spamear
+            time.sleep(1)  # Para no spamear
 
 # ==========================
 # MAIN
 # ==========================
 if __name__ == "__main__":
     bot = PolyWeatherBot()
-    # bot.run()  # Para modo normal
-    bot.backtest("2025-01-01", "2026-01-01") # Para backtest, cambia fechas
+    # bot.run()  # Modo normal (un ciclo)
+    bot.backtest("2025-01-01", "2026-01-21")  # Backtest (cambia fechas para probar)
