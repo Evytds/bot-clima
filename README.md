@@ -44,7 +44,8 @@ El bot:
 2. Filtra por odds (0.1¢ a 10¢) y liquidez mínima.
 3. Consulta forecasts de varias fuentes (Tomorrow.io, Weatherbit, OpenWeather).
 4. Calcula la probabilidad justa por outcome usando una normal centrada en la temperatura máxima (forecast high).
-   - El bot asume bins de ~1°F al convertir rangos a probabilidades.
+   - El bot asume bins de ~2°F al convertir rangos a probabilidades (configurable con `bin_width`).
+   - Si detecta una fecha en el mercado, intenta usar el forecast de ese día.
 5. Calcula edge y EV, y registra decisiones en modo simulación.
 
 Las decisiones quedan en `state/polymarket_auto_state.json`.
@@ -65,20 +66,26 @@ Archivo `config/polymarket_auto.json`:
 {
   "bankroll": 100.0,
   "cities": [
-    "London",
     "New York",
     "NYC",
+    "London",
+    "Seoul",
+    "Dallas",
+    "Atlanta",
+    "Toronto",
+    "Chicago",
+    "Los Angeles",
     "Paris",
     "Tokyo",
-    "Los Angeles",
-    "Chicago",
-    "Seoul"
+    "Wellington",
+    "Miami"
   ],
   "min_price": 0.001,
   "max_price": 0.1,
   "min_liquidity": 50.0,
-  "min_edge_pct": 0.2,
+  "min_edge_pct": 0.15,
   "deviation": 3.5,
+  "bin_width": 2.0,
   "stake_pct": 0.05,
   "max_stake": 10.0,
   "markets_limit": 200

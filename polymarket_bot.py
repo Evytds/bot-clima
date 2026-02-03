@@ -1,14 +1,16 @@
 import argparse
 import json
+import logging
 import math
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from statistics import mean
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+import dateparser
 import requests
 
 API_URL = "https://data-api.polymarket.com/activity"
@@ -357,15 +359,25 @@ def filter_weather_markets(
     return filtered
 
 
-def fetch_forecast_tomorrowio(city: str, api_key: str) -> Dict[str, float]:
+def fetch_forecast_tomorrowio(
+    city: str,
+    api_key: str,
+    target_date: Optional[date] = None,
+) -> Dict[str, float]:
+    params = {
+        "location": city,
+        "timesteps": "1d",
+        "units": "imperial",
+        "apikey": api_key,
+    }
+    if target_date:
+        start = datetime.combine(target_date, datetime.min.time(), tzinfo=timezone.utc)
+        end = start + timedelta(days=1)
+        params["startTime"] = start.isoformat()
+        params["endTime"] = end.isoformat()
     response = requests.get(
         TOMORROWIO_URL,
-        params={
-            "location": city,
-            "timesteps": "1d",
-            "units": "imperial",
-            "apikey": api_key,
-        },
+        params=params,
         timeout=20,
     )
     response.raise_for_status()
@@ -382,15 +394,23 @@ def fetch_forecast_tomorrowio(city: str, api_key: str) -> Dict[str, float]:
     return {"high": float(high), "low": float(low), "avg": float(avg)}
 
 
-def fetch_forecast_weatherbit(city: str, api_key: str) -> Dict[str, float]:
+def fetch_forecast_weatherbit(
+    city: str,
+    api_key: str,
+    target_date: Optional[date] = None,
+) -> Dict[str, float]:
+    params = {
+        "city": city,
+        "days": 1,
+        "units": "I",
+        "key": api_key,
+    }
+    if target_date:
+        params["start_date"] = target_date.strftime("%Y-%m-%d")
+        params["end_date"] = (target_date + timedelta(days=1)).strftime("%Y-%m-%d")
     response = requests.get(
         WEATHERBIT_URL,
-        params={
-            "city": city,
-            "days": 1,
-            "units": "I",
-            "key": api_key,
-        },
+        params=params,
         timeout=20,
     )
     response.raise_for_status()
@@ -407,7 +427,10 @@ def fetch_forecast_weatherbit(city: str, api_key: str) -> Dict[str, float]:
     return {"high": float(high), "low": float(low), "avg": float(avg)}
 
 
-def fetch_forecast_openweather(city: str, api_key: str) -> Dict[str, float]:
+def fetch_forecast_openweather(
+    city: str,
+    api_key: str,
+) -> Dict[str, float]:
     response = requests.get(
         OPENWEATHER_URL,
         params={
@@ -449,7 +472,7 @@ def probability_range(
     deviation: float,
     low: Optional[float],
     high: Optional[float],
-    bin_width: float = 1.0,
+    bin_width: float = 2.0,
 ) -> float:
     if low is None and high is not None:
         z = (high + bin_width - mean) / deviation
@@ -475,6 +498,28 @@ def consensus_forecast(forecasts: List[Dict[str, float]]) -> Dict[str, float]:
     }
 
 
+def extract_market_date(question: str) -> Optional[date]:
+    match = re.search(
+        r"(?:on|for)?\\s*"
+        r"((?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+        r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|"
+        r"dec(?:ember)?)\\s+\\d{1,2}(?:,?\\s*\\d{4})?|\\d{1,2}\\s+"
+        r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+        r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|"
+        r"dec(?:ember)?)(?:,?\\s*\\d{4})?)",
+        question.lower(),
+    )
+    if not match:
+        return None
+    parsed = dateparser.parse(
+        match.group(1),
+        settings={"PREFER_DATES_FROM": "future", "RETURN_AS_TIMEZONE_AWARE": False},
+    )
+    if parsed:
+        return parsed.date()
+    return None
+
+
 def decide_trade(
     market: MarketSnapshot,
     bankroll: float,
@@ -484,11 +529,12 @@ def decide_trade(
     stake_pct: float,
     max_stake: float,
     provider_count: int,
+    bin_width: float,
 ) -> Optional[TradeDecision]:
     best = None
     mean = forecast["high"]
     for outcome in market.outcomes:
-        fair_prob = probability_range(mean, deviation, outcome["low"], outcome["high"])
+        fair_prob = probability_range(mean, deviation, outcome["low"], outcome["high"], bin_width=bin_width)
         market_price = outcome["price"]
         if market_price <= 0:
             continue
@@ -527,12 +573,27 @@ def run_autonomous_bot(config_path: Path, state_path: Path) -> None:
         config_path,
         {
             "bankroll": 100.0,
-            "cities": ["London", "New York", "Seoul"],
+            "cities": [
+                "New York",
+                "NYC",
+                "London",
+                "Seoul",
+                "Dallas",
+                "Atlanta",
+                "Toronto",
+                "Chicago",
+                "Los Angeles",
+                "Paris",
+                "Tokyo",
+                "Wellington",
+                "Miami",
+            ],
             "min_price": 0.001,
             "max_price": 0.10,
             "min_liquidity": 50.0,
-            "min_edge_pct": 0.2,
+            "min_edge_pct": 0.15,
             "deviation": 3.5,
+            "bin_width": 2.0,
             "stake_pct": 0.05,
             "max_stake": 10.0,
             "markets_limit": 200,
@@ -556,7 +617,24 @@ def run_autonomous_bot(config_path: Path, state_path: Path) -> None:
     )
     weather_markets = filter_weather_markets(
         markets,
-        config.get("cities", ["London", "New York", "Seoul"]),
+        config.get(
+            "cities",
+            [
+                "New York",
+                "NYC",
+                "London",
+                "Seoul",
+                "Dallas",
+                "Atlanta",
+                "Toronto",
+                "Chicago",
+                "Los Angeles",
+                "Paris",
+                "Tokyo",
+                "Wellington",
+                "Miami",
+            ],
+        ),
         float(config.get("min_price", 0.001)),
         float(config.get("max_price", 0.10)),
         float(config.get("min_liquidity", 50.0)),
@@ -564,12 +642,17 @@ def run_autonomous_bot(config_path: Path, state_path: Path) -> None:
 
     decisions = []
     for market in weather_markets:
+        market_date = extract_market_date(market.question)
+        if market_date is None:
+            logging.info("No se pudo parsear fecha para %s", market.question)
         forecasts = []
         if api_keys["tomorrowio"]:
-            forecasts.append(fetch_forecast_tomorrowio(market.city, api_keys["tomorrowio"]))
+            forecasts.append(fetch_forecast_tomorrowio(market.city, api_keys["tomorrowio"], market_date))
         if api_keys["weatherbit"]:
-            forecasts.append(fetch_forecast_weatherbit(market.city, api_keys["weatherbit"]))
+            forecasts.append(fetch_forecast_weatherbit(market.city, api_keys["weatherbit"], market_date))
         if api_keys["openweather"]:
+            if market_date:
+                logging.info("OpenWeather no permite fecha específica; usando forecast actual.")
             forecasts.append(fetch_forecast_openweather(market.city, api_keys["openweather"]))
         if not forecasts:
             continue
@@ -579,10 +662,11 @@ def run_autonomous_bot(config_path: Path, state_path: Path) -> None:
             bankroll,
             forecast,
             float(config.get("deviation", 3.5)),
-            float(config.get("min_edge_pct", 0.2)),
+            float(config.get("min_edge_pct", 0.15)),
             float(config.get("stake_pct", 0.05)),
             float(config.get("max_stake", 10.0)),
             len(forecasts),
+            float(config.get("bin_width", 2.0)),
         )
         if decision:
             bankroll -= decision.stake
@@ -660,6 +744,7 @@ def run_report(wallet: str, limit: int, output: Path, json_path: Path) -> None:
 
 
 def main() -> None:
+    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
     parser = argparse.ArgumentParser(
         description="Bot Polymarket: reporte de actividad o modo autónomo (paper trading)."
     )
