@@ -47,6 +47,7 @@ El bot:
    - El bot asume bins de ~2°F al convertir rangos a probabilidades (configurable con `bin_width`).
    - Si detecta una fecha en el mercado, intenta usar el forecast de ese día.
 5. Calcula edge y EV, y registra decisiones en modo simulación (stake basado en half‑Kelly).
+   - Usa `min_stake` y `max_bankroll_pct_per_trade` para limitar el riesgo por operación.
 
 Las decisiones quedan en `state/polymarket_auto_state.json`.
 
@@ -89,7 +90,10 @@ Archivo `config/polymarket_auto.json`:
   "min_edge_pct": 0.15,
   "deviation": 3.5,
   "bin_width": 2.0,
+  "half_kelly_factor": 0.5,
+  "min_stake": 1.0,
   "max_stake": 10.0,
+  "max_bankroll_pct_per_trade": 0.2,
   "markets_limit": 200
 }
 ```

@@ -37,6 +37,7 @@ class TradeDecision:
     forecast_high: float
     forecast_low: float
     outcome_label: str
+    token_id: str
     fair_prob: float
     market_price: float
     edge: float
@@ -306,6 +307,7 @@ def parse_market_outcomes(market: Dict[str, Any]) -> List[Dict[str, Any]]:
                         "price": float(price),
                         "low": low,
                         "high": high,
+                        "token_id": outcome.get("token_id") or outcome.get("tokenId") or "",
                     }
                 )
     return parsed
@@ -523,10 +525,12 @@ def decide_trade(
     forecast: Dict[str, float],
     deviation: float,
     min_edge_pct: float,
-    stake_pct: float,
+    min_stake: float,
     max_stake: float,
     provider_count: int,
     bin_width: float,
+    half_kelly_factor: float,
+    max_bankroll_pct: float,
 ) -> Optional[TradeDecision]:
     best = None
     mean = forecast["high"]
@@ -539,6 +543,7 @@ def decide_trade(
         if best is None or edge > best["edge"]:
             best = {
                 "label": outcome["label"],
+                "token_id": outcome.get("token_id", ""),
                 "fair_prob": fair_prob,
                 "market_price": market_price,
                 "edge": edge,
@@ -551,9 +556,11 @@ def decide_trade(
     if odds <= 0:
         return None
     kelly_fraction = best["edge"] / odds
-    stake = bankroll * kelly_fraction * 0.5
-    stake = min(stake, max_stake, bankroll)
-    if stake <= 0:
+    stake = bankroll * kelly_fraction * half_kelly_factor
+    stake = max(stake, min_stake)
+    stake = min(stake, max_stake, bankroll * max_bankroll_pct, bankroll)
+    stake = round(stake, 2)
+    if stake < min_stake:
         return None
     return TradeDecision(
         market_slug=market.market_slug,
@@ -562,11 +569,12 @@ def decide_trade(
         forecast_high=forecast["high"],
         forecast_low=forecast["low"],
         outcome_label=best["label"],
+        token_id=best["token_id"],
         fair_prob=best["fair_prob"],
         market_price=best["market_price"],
         edge=best["edge"],
         outcome="BUY",
-        stake=round(stake, 2),
+        stake=stake,
         ev_per_dollar=best["edge"],
         provider_count=provider_count,
     )
@@ -598,7 +606,10 @@ def run_autonomous_bot(config_path: Path, state_path: Path) -> None:
             "min_edge_pct": 0.15,
             "deviation": 3.5,
             "bin_width": 2.0,
+            "half_kelly_factor": 0.5,
+            "min_stake": 1.0,
             "max_stake": 10.0,
+            "max_bankroll_pct_per_trade": 0.20,
             "markets_limit": 200,
             "note": "Configura claves TOMORROWIO_API_KEY, WEATHERBIT_API_KEY u OPENWEATHER_API_KEY.",
         },
@@ -676,9 +687,12 @@ def run_autonomous_bot(config_path: Path, state_path: Path) -> None:
             forecast,
             float(config.get("deviation", 3.5)),
             float(config.get("min_edge_pct", 0.15)),
+            float(config.get("min_stake", 1.0)),
             float(config.get("max_stake", 10.0)),
             len(forecasts),
             float(config.get("bin_width", 2.0)),
+            float(config.get("half_kelly_factor", 0.5)),
+            float(config.get("max_bankroll_pct_per_trade", 0.20)),
         )
         if decision:
             bankroll -= decision.stake
