@@ -294,7 +294,7 @@ def parse_market_outcomes(market: Dict[str, Any]) -> List[Dict[str, Any]]:
     if not isinstance(outcomes, list):
         return parsed
     for outcome in outcomes:
-        label = outcome.get("outcome") or outcome.get("label") or ""
+        label = outcome.get("channel") or outcome.get("outcome") or outcome.get("label") or ""
         price = outcome.get("price")
         if label and price is not None:
             range_info = parse_outcome_range(str(label))
@@ -344,7 +344,7 @@ def filter_weather_markets(
             for outcome in outcomes
             if min_price <= outcome["price"] <= max_price
         ]
-        if not outcomes:
+        if len(outcomes) < 10:
             continue
         market_slug = market.get("marketSlug") or market.get("slug") or question
         filtered.append(
@@ -547,7 +547,14 @@ def decide_trade(
     if not best or best["edge"] < min_edge_pct:
         return None
 
-    stake = min(bankroll * stake_pct, max_stake, bankroll)
+    odds = (1 / best["market_price"]) - 1
+    if odds <= 0:
+        return None
+    kelly_fraction = best["edge"] / odds
+    stake = bankroll * kelly_fraction * 0.5
+    stake = min(stake, max_stake, bankroll)
+    if stake <= 0:
+        return None
     return TradeDecision(
         market_slug=market.market_slug,
         city=market.city,
@@ -591,7 +598,6 @@ def run_autonomous_bot(config_path: Path, state_path: Path) -> None:
             "min_edge_pct": 0.15,
             "deviation": 3.5,
             "bin_width": 2.0,
-            "stake_pct": 0.05,
             "max_stake": 10.0,
             "markets_limit": 200,
             "note": "Configura claves TOMORROWIO_API_KEY, WEATHERBIT_API_KEY u OPENWEATHER_API_KEY.",
@@ -670,7 +676,6 @@ def run_autonomous_bot(config_path: Path, state_path: Path) -> None:
             forecast,
             float(config.get("deviation", 3.5)),
             float(config.get("min_edge_pct", 0.15)),
-            float(config.get("stake_pct", 0.05)),
             float(config.get("max_stake", 10.0)),
             len(forecasts),
             float(config.get("bin_width", 2.0)),

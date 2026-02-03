@@ -46,7 +46,7 @@ El bot:
 4. Calcula la probabilidad justa por outcome usando una normal centrada en la temperatura máxima (forecast high).
    - El bot asume bins de ~2°F al convertir rangos a probabilidades (configurable con `bin_width`).
    - Si detecta una fecha en el mercado, intenta usar el forecast de ese día.
-5. Calcula edge y EV, y registra decisiones en modo simulación.
+5. Calcula edge y EV, y registra decisiones en modo simulación (stake basado en half‑Kelly).
 
 Las decisiones quedan en `state/polymarket_auto_state.json`.
 
@@ -75,6 +75,9 @@ Archivo `config/polymarket_auto.json`:
     "Toronto",
     "Chicago",
     "Los Angeles",
+    "San Francisco",
+    "Boston",
+    "Houston",
     "Paris",
     "Tokyo",
     "Wellington",
@@ -86,7 +89,6 @@ Archivo `config/polymarket_auto.json`:
   "min_edge_pct": 0.15,
   "deviation": 3.5,
   "bin_width": 2.0,
-  "stake_pct": 0.05,
   "max_stake": 10.0,
   "markets_limit": 200
 }
