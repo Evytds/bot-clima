@@ -501,12 +501,9 @@ def consensus_forecast(forecasts: List[Dict[str, float]]) -> Dict[str, float]:
 def extract_market_date(question: str) -> Optional[date]:
     match = re.search(
         r"(?:on|for)?\\s*"
-        r"((?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
-        r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|"
-        r"dec(?:ember)?)\\s+\\d{1,2}(?:,?\\s*\\d{4})?|\\d{1,2}\\s+"
-        r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
-        r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|"
-        r"dec(?:ember)?)(?:,?\\s*\\d{4})?)",
+        r"((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?\\s*"
+        r"\\d{1,2}(?:st|nd|rd|th)?|\\d{1,2}\\s*"
+        r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?)(?:,?\\s*\\d{4})?",
         question.lower(),
     )
     if not match:
@@ -645,15 +642,25 @@ def run_autonomous_bot(config_path: Path, state_path: Path) -> None:
         market_date = extract_market_date(market.question)
         if market_date is None:
             logging.info("No se pudo parsear fecha para %s", market.question)
+        days_ahead = None
+        if market_date:
+            days_ahead = (market_date - date.today()).days
         forecasts = []
         if api_keys["tomorrowio"]:
             forecasts.append(fetch_forecast_tomorrowio(market.city, api_keys["tomorrowio"], market_date))
         if api_keys["weatherbit"]:
             forecasts.append(fetch_forecast_weatherbit(market.city, api_keys["weatherbit"], market_date))
         if api_keys["openweather"]:
-            if market_date:
-                logging.info("OpenWeather no permite fecha específica; usando forecast actual.")
-            forecasts.append(fetch_forecast_openweather(market.city, api_keys["openweather"]))
+            if days_ahead is not None and days_ahead > 5:
+                logging.info(
+                    "OpenWeather no cubre +%d días; omitiendo para %s",
+                    days_ahead,
+                    market.city,
+                )
+            else:
+                if market_date:
+                    logging.info("OpenWeather no permite fecha específica; usando forecast actual.")
+                forecasts.append(fetch_forecast_openweather(market.city, api_keys["openweather"]))
         if not forecasts:
             continue
         forecast = consensus_forecast(forecasts)
