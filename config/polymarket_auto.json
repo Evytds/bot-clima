@@ -1,0 +1,21 @@
+{
+  "bankroll": 100.0,
+  "cities": [
+    "London",
+    "New York",
+    "NYC",
+    "Paris",
+    "Tokyo",
+    "Los Angeles",
+    "Chicago",
+    "Seoul"
+  ],
+  "min_price": 0.001,
+  "max_price": 0.1,
+  "min_liquidity": 50.0,
+  "min_edge_pct": 0.2,
+  "deviation": 3.5,
+  "stake_pct": 0.05,
+  "max_stake": 10.0,
+  "markets_limit": 200
+}
