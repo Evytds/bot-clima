@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Polymarket Weather Bot - $30 Survival Edition v2.4 FINAL
-Fix: Date parsing cross-year confía en dateparser
+API Keys configuradas: Ready to run
 """
 
 import json
@@ -288,13 +288,14 @@ class ResolutionEngine:
         
         return positions
 
-# === WEATHER APIs ===
+# === WEATHER APIs CON TUS KEYS ===
 
 class WeatherAPI:
     def __init__(self):
+        # TUS API KEYS CONFIGURADAS
         self.keys = {
-            "tomorrowio": os.getenv("TOMORROWIO_API_KEY"),
-            "weatherbit": os.getenv("WEATHERBIT_API_KEY")
+            "tomorrowio": "RfRDKxiUphzUEYfFcXsDuwBTxBZCrvJ7",  # ← TU KEY
+            "weatherbit": "a40d62b402ab45b684656d419ef87ceb"     # ← TU KEY
         }
         self.cache = {}
         self.session = requests.Session()
@@ -329,23 +330,31 @@ class WeatherAPI:
         
         forecasts = []
         
+        # Intentar Tomorrow.io primero
         if self.keys.get("tomorrowio"):
             try:
                 fc = self._fetch_tomorrowio(city, target_date)
-                if fc: forecasts.append(("tomorrowio", fc))
+                if fc: 
+                    forecasts.append(("tomorrowio", fc))
+                    logger.info(f"✅ Tomorrow.io OK: {city} {target_date}")
             except Exception as e:
-                logger.debug(f"Tomorrow.io error: {e}")
+                logger.warning(f"Tomorrow.io falló: {e}")
         
-        if self.keys.get("weatherbit") and len(forecasts) == 0:
+        # Fallback a Weatherbit
+        if len(forecasts) == 0 and self.keys.get("weatherbit"):
             try:
                 fc = self._fetch_weatherbit(city, target_date)
-                if fc: forecasts.append(("weatherbit", fc))
+                if fc: 
+                    forecasts.append(("weatherbit", fc))
+                    logger.info(f"✅ Weatherbit OK: {city} {target_date}")
             except Exception as e:
-                logger.debug(f"Weatherbit error: {e}")
+                logger.warning(f"Weatherbit falló: {e}")
         
         if not forecasts:
+            logger.error(f"❌ Sin forecast para {city} {target_date}")
             return None
         
+        # Promediar resultados
         avg_temp = sum(f["temp"] for _, f in forecasts) / len(forecasts)
         high_temp = sum(f.get("high", avg_temp) for _, f in forecasts) / len(forecasts)
         low_temp = sum(f.get("low", avg_temp) for _, f in forecasts) / len(forecasts)
@@ -382,21 +391,24 @@ class WeatherAPI:
                 "fields": "temperature,temperatureMax,temperatureMin",
                 "units": "imperial",
                 "timesteps": "1d",
-                "apikey": self.keys["tomorrowio"],
+                "apikey": self.keys["tomorrowio"],  # TU KEY USADA AQUÍ
                 "startTime": f"{target_date}T00:00:00Z",
                 "endTime": f"{target_date}T23:59:59Z"
             }
             
+            logger.debug(f"Calling Tomorrow.io: {city} {target_date}")
             resp = self.session.get(CONFIG["tomorrowio_url"], params=params, timeout=15)
             resp.raise_for_status()
             data = resp.json()
             
             timelines = data.get("data", {}).get("timelines", [])
             if not timelines:
+                logger.error("Tomorrow.io: No timelines")
                 return None
             
             intervals = timelines[0].get("intervals", [])
             if not intervals:
+                logger.error("Tomorrow.io: No intervals")
                 return None
             
             vals = intervals[0].get("values", {})
@@ -407,6 +419,14 @@ class WeatherAPI:
                 "low": vals.get("temperatureMin", 65),
             }
             
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                logger.error("❌ Tomorrow.io: API Key inválida")
+            elif e.response.status_code == 429:
+                logger.error("❌ Tomorrow.io: Rate limit excedido")
+            else:
+                logger.error(f"Error Tomorrow.io HTTP {e.response.status_code}: {e}")
+            return None
         except Exception as e:
             logger.error(f"Error Tomorrow.io: {e}")
             return None
@@ -417,11 +437,12 @@ class WeatherAPI:
             
             params = {
                 "city": city_query,
-                "key": self.keys["weatherbit"],
+                "key": self.keys["weatherbit"],  # TU KEY USADA AQUÍ
                 "days": 16,
                 "units": "I"
             }
             
+            logger.debug(f"Calling Weatherbit: {city} {target_date}")
             resp = self.session.get(CONFIG["weatherbit_url"], params=params, timeout=15)
             resp.raise_for_status()
             data = resp.json()
@@ -434,8 +455,15 @@ class WeatherAPI:
                         "low": day.get("min_temp", 65),
                     }
             
+            logger.error(f"Weatherbit: Fecha {target_date} no encontrada")
             return None
             
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 403:
+                logger.error("❌ Weatherbit: API Key inválida o expirada")
+            else:
+                logger.error(f"Error Weatherbit HTTP {e.response.status_code}: {e}")
+            return None
         except Exception as e:
             logger.error(f"Error Weatherbit: {e}")
             return None
@@ -491,6 +519,7 @@ class SignalGenerator:
     
     def fetch_polymarket_weather(self) -> List[Dict]:
         try:
+            logger.info("🔍 Buscando mercados en Polymarket...")
             params = {
                 "active": "true",
                 "liquidity": CONFIG["min_liquidity"],
@@ -499,6 +528,8 @@ class SignalGenerator:
             resp = requests.get(CONFIG["polymarket_gamma"], params=params, timeout=15)
             resp.raise_for_status()
             markets = resp.json()
+            
+            logger.info(f"   {len(markets)} mercados totales")
             
             weather_markets = []
             for m in markets:
@@ -515,7 +546,7 @@ class SignalGenerator:
                 if not city:
                     continue
                 
-                # CORREGIDO: Dateparser maneja el año automáticamente
+                # Date parsing con dateparser
                 date_match = re.search(
                     r'(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s*\d{1,2}',
                     q,
@@ -524,7 +555,6 @@ class SignalGenerator:
                 
                 if date_match:
                     try:
-                        # dateparser con 'future' elige el año correcto automáticamente
                         parsed = dateparser.parse(
                             date_match.group(0), 
                             settings={'PREFER_DATES_FROM': 'future'}
@@ -547,6 +577,7 @@ class SignalGenerator:
                     "end_date_iso": m.get("endDate")
                 })
             
+            logger.info(f"   {len(weather_markets)} mercados de clima encontrados")
             return weather_markets
             
         except Exception as e:
@@ -719,19 +750,23 @@ class SurvivalBot:
     
     def can_trade(self) -> bool:
         if self.state["today_trades"] >= CONFIG["absolute_max_day"]:
+            logger.info("⛔ Límite diario alcanzado")
             return False
         
         if self.state["today_losses"] >= CONFIG["stop_loss_day"]:
+            logger.info("🛑 Stop loss diario activado")
             return False
         
         if self.state["last_trade_time"]:
             last = datetime.fromisoformat(self.state["last_trade_time"])
             hours_since = (datetime.now(timezone.utc) - last).total_seconds() / 3600
             if hours_since < CONFIG["cooldown_hours"]:
+                logger.info(f"⏳ Cooldown: espera {CONFIG['cooldown_hours']-hours_since:.1f}h")
                 return False
         
         available = self.state["cash"] - self.state["exposed"]
         if available < CONFIG["min_trade"]:
+            logger.info(f"💸 Insuficiente: ${available:.2f}")
             return False
         
         return True
@@ -774,11 +809,16 @@ class SurvivalBot:
             self.daily_report()
             return
         
+        logger.info(f"🎯 {len(signals)} señales con edge > {CONFIG['min_edge']:.0%}")
+        logger.info(f"   Mejor: {signals[0]['city']} {signals[0]['outcome'][:30]}... "
+                   f"@ {signals[0]['price']:.0%} (edge: {signals[0]['edge']:.1%})")
+        
         # 4. Ejecutar mejor señal
         best = signals[0]
         stake = self.calculate_position_size(best["edge"], best["forecast"]["providers"])
         
         if stake <= 0:
+            logger.info("⚠️ Stake calculado: $0 (condiciones no cumplen)")
             self.daily_report()
             return
         
@@ -800,10 +840,9 @@ class SurvivalBot:
         state_mgr.save_positions(self.positions)
         self.daily_report()
 
-# === MAIN CON SCHEDULER ===
+# === MAIN ===
 
 def run_single_cycle():
-    """Ejecuta un ciclo del bot"""
     try:
         bot = SurvivalBot()
         bot.run()
@@ -815,8 +854,9 @@ def run_single_cycle():
 if __name__ == "__main__":
     import sys
     
-    # Modo single run (default)
+    # Modo single run (default para testing)
     if len(sys.argv) > 1 and sys.argv[1] == "--once":
+        logger.info("🔄 Modo: Single run (--once)")
         run_single_cycle()
     else:
         # Modo scheduler
@@ -826,21 +866,20 @@ if __name__ == "__main__":
         
         start_time = time.time()
         max_runtime = CONFIG["max_runtime_hours"] * 3600
-        
         cycle_count = 0
         
         while True:
             cycle_count += 1
-            logger.info(f"\n{'='*50}")
+            logger.info(f"\n{'='*60}")
             logger.info(f"⏰ CICLO #{cycle_count} - {datetime.now(timezone.utc).strftime('%H:%M UTC')}")
-            logger.info(f"{'='*50}")
+            logger.info(f"{'='*60}")
             
             run_single_cycle()
             
             elapsed = time.time() - start_time
             if elapsed > max_runtime:
-                logger.info("⏰ Tiempo máximo alcanzado (24h). Reiniciar manualmente.")
+                logger.info("⏰ Tiempo máximo alcanzado. Reiniciar manualmente.")
                 break
             
-            logger.info(f"😴 Durmiendo {CONFIG['run_interval_seconds']/3600:.1f} horas...")
+            logger.info(f"😴 Durmiendo {CONFIG['run_interval_seconds']/3600:.1f}h...")
             time.sleep(CONFIG["run_interval_seconds"])
