@@ -1,920 +1,846 @@
 #!/usr/bin/env python3
 """
-Polymarket Weather Trading Bot - Micro-Stake Edition
-Optimizado para bankroll de $30 en Polymarket
+Polymarket Weather Bot - $30 Survival Edition v2.4 FINAL
+Fix: Date parsing cross-year confía en dateparser
 """
 
-import argparse
 import json
-import logging
-import math
 import os
 import re
-import hashlib
 import time
-from dataclasses import dataclass, asdict
-from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
-from statistics import mean, stdev
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Set
-from functools import wraps
-import threading
-
-import dateparser
+import logging
 import requests
-from requests.adapters import HTTPAdapter
+import dateparser
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, asdict
+from collections import defaultdict
 
-try:
-    from py_clob_client.client import ClobClient
-    from py_clob_client.clob_types import OrderArgs
-    from py_clob_client.constants import BUY
-except ImportError:
-    ClobClient = None
-    OrderArgs = None
-    BUY = None
+# === CONFIGURACIÓN ===
 
-# === CONFIGURACIÓN MICRO-STAKE $30 ===
-
-CONFIG_PATH = Path("config") / "polymarket_auto.json"
-STATE_DIR = Path("state")
-STATE_DIR.mkdir(parents=True, exist_ok=True)
-STATE_PATH = STATE_DIR / "state.json"
-STATE_BACKUP_PATH = STATE_DIR / "state.backup.json"
-LOGS_DIR = Path("logs")
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
-
-# URLs Polymarket
-POLYMARKET_GAMMA_URL = "https://gamma-api.polymarket.com/markets"
-POLYMARKET_CLOB_URL = "https://clob.polymarket.com"
-
-# APIs Clima
-TOMORROWIO_URL = "https://api.tomorrow.io/v4/weather/forecast"
-WEATHERBIT_URL = "https://api.weatherbit.io/v2.0/forecast/daily"
-OPENWEATHER_URL = "https://api.openweathermap.org/data/2.5/forecast"
-
-# Locks thread-safety
-state_lock = threading.Lock()
-
-# === ESTRUCTURAS DE DATOS ===
-
-@dataclass(frozen=True)
-class MarketSnapshot:
-    market_slug: str
-    question: str
-    city: str
-    condition: str
-    target_date: datetime
-    liquidity: float
-    volume_24h: float
-    outcomes: Tuple[Dict[str, Any], ...]
-    condition_id: str
-    geo_group: Optional[str] = None
-
-@dataclass(frozen=True)
-class TradeDecision:
-    market_slug: str
-    city: str
-    condition: str
-    target_date: datetime
-    forecast_avg: float
-    forecast_high: float
-    forecast_low: float
-    outcome_label: str
-    token_id: str
-    side: str  # BUY o SELL
-    fair_prob: float
-    market_price: float
-    edge: float
-    stake: float
-    ev_per_dollar: float
-    provider_count: int
-    correlation_penalty: float
-    timestamp: datetime
+CONFIG = {
+    "bankroll": 30.0,
+    "min_trade": 1.0,
+    "max_trade": 2.0,
+    "absolute_max_day": 3,
+    "stop_loss_day": 2,
+    "min_edge": 0.30,
+    "cooldown_hours": 4,
+    
+    # APIs
+    "polymarket_gamma": "https://gamma-api.polymarket.com/markets",
+    "tomorrowio_url": "https://api.tomorrow.io/v4/timelines",
+    "weatherbit_url": "https://api.weatherbit.io/v2.0/forecast/daily",
+    
+    # Scheduler
+    "run_interval_seconds": 3600,
+    "max_runtime_hours": 24,
+    
+    # Filtros
+    "min_liquidity": 1000,
+    "cities": ["Seattle", "New York", "NYC", "Boston", "Chicago", 
+               "Toronto", "Atlanta", "Dallas", "Denver", "London", "Seoul"],
+    
+    # Archivos
+    "state_file": "survival_state.json",
+    "positions_file": "positions.json",
+    "log_file": "bot.log",
+}
 
 # === LOGGING ===
 
-def setup_logging():
-    log_file = LOGS_DIR / f"bot_{datetime.now(timezone.utc).strftime('%Y%m%d')}.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(CONFIG["log_file"])
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# === ESTRUCTURAS ===
+
+@dataclass
+class Position:
+    position_id: str
+    market_slug: str
+    condition_id: str
+    question: str
+    city: str
+    outcome: str
+    outcome_index: int
+    token_id: str
+    side: str
+    entry_price: float
+    shares: float
+    stake: float
+    trade_type: str
+    edge_at_entry: float
+    entry_time: str
+    target_date: str
+    status: str = "open"
+    resolution_price: Optional[float] = None
+    pnl: Optional[float] = None
+    resolved_at: Optional[str] = None
+    pnl_applied: bool = False
+
+# === PERSISTENCIA ===
+
+class StateManager:
+    def __init__(self):
+        self.state_path = Path(CONFIG["state_file"])
+        self.positions_path = Path(CONFIG["positions_file"])
     
-    formatter = logging.Formatter(
-        '%(asctime)s | %(levelname)s | %(message)s',
-        datefmt='%H:%M:%S'
-    )
-    
-    file_handler = logging.FileHandler(log_file, encoding='utf-8')
-    file_handler.setFormatter(formatter)
-    
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
-    
-    return logger
-
-logger = setup_logging()
-
-# === UTILIDADES ===
-
-def retry(max_tries=3, delay=1.0):
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            for i in range(max_tries):
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    if i == max_tries - 1:
-                        raise
-                    time.sleep(delay * (2 ** i))
-        return wrapper
-    return decorator
-
-def atomic_write(path: Path, content: str):
-    tmp = path.with_suffix('.tmp')
-    try:
-        tmp.write_text(content, encoding='utf-8')
-        tmp.replace(path)
-    except:
-        if tmp.exists():
-            tmp.unlink()
-        raise
-
-# === ESTADO ===
-
-def load_state() -> Dict:
-    with state_lock:
-        if STATE_PATH.exists():
+    def load_state(self) -> Dict:
+        if self.state_path.exists():
             try:
-                return json.loads(STATE_PATH.read_text())
-            except:
-                if STATE_BACKUP_PATH.exists():
-                    return json.loads(STATE_BACKUP_PATH.read_text())
+                with open(self.state_path, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Error cargando estado: {e}")
+        
         return {
-            "bankroll": 30.0,
-            "daily_deposited": 30.0,
-            "positions": [],
-            "daily_pnl": 0.0,
-            "trades_today": 0,
-            "last_date": datetime.now(timezone.utc).strftime('%Y-%m-%d'),
+            "cash": CONFIG["bankroll"],
+            "exposed": 0.0,
             "total_trades": 0,
             "wins": 0,
-            "losses": 0
+            "losses": 0,
+            "today_trades": 0,
+            "today_losses": 0,
+            "today_wins": 0,
+            "last_trade_time": None,
+            "consecutive_losses": 0,
+            "current_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "lifetime_pnl": 0.0,
+            "max_drawdown": 0.0,
+            "peak_bankroll": CONFIG["bankroll"],
         }
-
-def save_state(state: Dict):
-    with state_lock:
-        if STATE_PATH.exists():
-            STATE_PATH.replace(STATE_BACKUP_PATH)
-        atomic_write(STATE_PATH, json.dumps(state, indent=2, default=str))
-
-# === CONFIG ===
-
-def load_config():
-    """Config optimizada para $30 bankroll"""
-    defaults = {
-        # Bankroll inicial
-        "initial_bankroll": 30.0,
-        "trading_mode": "paper",
-        
-        # Ciudades con mercados líquidos en Polymarket
-        "cities": [
-            "New York", "NYC", "London", "Chicago", "Los Angeles",
-            "Boston", "Miami", "Seattle", "Dallas", "Denver",
-            "San Francisco", "Atlanta", "Toronto", "Tokyo"
-        ],
-        
-        # Filtros de mercado - más permisivos para encontrar oportunidades
-        "min_price": 0.05,      # No comprar outcomes caros
-        "max_price": 0.95,      # No comprar outcomes baratos (vender en su lugar)
-        "min_liquidity": 500,   # Mínimo para poder salir
-        "min_volume_24h": 100,
-        
-        # Parámetros de edge - conservadores
-        "min_edge_pct": 0.20,   # 20% mínimo de edge
-        "forecast_confidence": 2.5,  # Grados de incertidumbre
-        
-        # Gestión de riesgo - ULTRA CONSERVADORA para $30
-        "max_stake_per_trade": 5.0,      # Máximo $5 por trade (16.6% del bankroll)
-        "max_daily_exposure": 15.0,      # Máximo $15 expuesto simultáneamente
-        "max_trades_per_day": 3,         # Máximo 3 trades por día
-        "min_bankroll_buffer": 10.0,     # Mantener $10 de buffer siempre
-        
-        # Kelly muy fraccionado
-        "kelly_fraction": 0.10,          # 10% de Kelly full (prácticamente 1/20 Kelly)
-        
-        # Slippage
-        "max_slippage": 0.01,            # 1% máximo
-        
-        # Grupos de correlación
-        "correlation_groups": {
-            "northeast": ["New York", "NYC", "Boston", "Philadelphia"],
-            "west_coast": ["Los Angeles", "San Francisco", "Seattle"],
-            "south": ["Miami", "Dallas", "Atlanta", "Houston"],
-            "midwest": ["Chicago", "Denver", "Detroit"],
-            "international": ["London", "Toronto", "Tokyo"]
-        }
-    }
     
-    if CONFIG_PATH.exists():
+    def save_state(self, state: Dict):
+        tmp = self.state_path.with_suffix('.tmp')
         try:
-            user = json.loads(CONFIG_PATH.read_text())
-            return {**defaults, **user}
-        except:
-            pass
-    return defaults
+            with open(tmp, 'w') as f:
+                json.dump(state, f, indent=2)
+            tmp.replace(self.state_path)
+        except Exception as e:
+            logger.error(f"Error guardando estado: {e}")
+            if tmp.exists():
+                tmp.unlink()
+    
+    def load_positions(self) -> List[Position]:
+        if not self.positions_path.exists():
+            return []
+        
+        try:
+            with open(self.positions_path, 'r') as f:
+                data = json.load(f)
+            
+            positions = []
+            for p in data:
+                if "pnl_applied" not in p:
+                    p["pnl_applied"] = False
+                if "outcome_index" not in p:
+                    p["outcome_index"] = 0
+                positions.append(Position(**p))
+            
+            return positions
+        except Exception as e:
+            logger.error(f"Error cargando posiciones: {e}")
+            return []
+    
+    def save_positions(self, positions: List[Position]):
+        data = [asdict(p) for p in positions]
+        tmp = self.positions_path.with_suffix('.tmp')
+        try:
+            with open(tmp, 'w') as f:
+                json.dump(data, f, indent=2, default=str)
+            tmp.replace(self.positions_path)
+        except Exception as e:
+            logger.error(f"Error guardando posiciones: {e}")
 
-# === FETCHERS POLYMARKET ===
+state_mgr = StateManager()
 
-@retry(max_tries=3)
-def fetch_polymarket_markets(limit=500) -> List[Dict]:
-    """Obtiene mercados activos de Polymarket Gamma API"""
-    params = {
-        "active": "true",
-        "closed": "false",
-        "archived": "false",
-        "limit": limit,
-        "sort": "volume",
-        "order": "desc"
-    }
-    
-    resp = requests.get(POLYMARKET_GAMMA_URL, params=params, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
-    
-    markets = []
-    for m in data if isinstance(data, list) else []:
-        if not isinstance(m, dict):
-            continue
-        if m.get("closed", True) or m.get("archived", False):
-            continue
-        markets.append(m)
-    
-    logger.info(f"📊 {len(markets)} mercados activos en Polymarket")
-    return markets
+# === RESET DIARIO ===
 
-# === PARSING DE MERCADOS CLIMA ===
+def check_daily_reset(state: Dict) -> Dict:
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    
+    if state.get("current_date") != today:
+        logger.info(f"🌅 Nuevo día: {today}")
+        logger.info(f"   Ayer: {state['today_wins']}W/{state['today_losses']}L")
+        
+        state["current_date"] = today
+        state["today_trades"] = 0
+        state["today_losses"] = 0
+        state["today_wins"] = 0
+        state["consecutive_losses"] = 0
+    
+    return state
 
-def parse_weather_market(market: Dict, config: Dict) -> Optional[MarketSnapshot]:
-    """Extrae información de mercados climáticos de Polymarket"""
-    question = market.get("question", "").lower()
-    slug = market.get("slug", "")
-    
-    # Detectar ciudad
-    city = None
-    for c in config["cities"]:
-        if c.lower() in question:
-            city = c
-            break
-    
-    if not city:
-        return None
-    
-    # Detectar tipo de mercado
-    condition = "unknown"
-    if "temperature" in question or "high" in question or "low" in question:
-        condition = "temperature"
-    elif "rain" in question:
-        condition = "rain"
-    elif "snow" in question:
-        condition = "snow"
-    else:
-        return None  # Solo nos interesa clima por ahora
-    
-    # Extraer fecha del título
-    target_date = extract_date_from_question(question)
-    if not target_date:
-        target_date = datetime.now(timezone.utc) + timedelta(days=1)
-    
-    # Verificar que no cierra muy pronto (mínimo 6 horas)
-    hours_to_close = (target_date - datetime.now(timezone.utc)).total_seconds() / 3600
-    if hours_to_close < 6:
-        return None
-    
-    # Determinar grupo de correlación
-    geo_group = None
-    for group, cities in config["correlation_groups"].items():
-        if city in cities:
-            geo_group = group
-            break
-    
-    # Parsear outcomes
-    outcomes = []
-    for out in market.get("outcomes", []):
-        price = float(out.get("price", 0))
-        if config["min_price"] <= price <= config["max_price"]:
-            outcomes.append({
-                "label": out.get("name", out.get("label", "Unknown")),
-                "price": price,
-                "token_id": out.get("token_id", out.get("id", "")),
-                "outcome_id": out.get("id", ""),
-                "side": "BUY" if price < 0.5 else "SELL"
-            })
-    
-    if len(outcomes) < 2:
-        return None
-    
-    liquidity = float(market.get("liquidity", 0))
-    volume = float(market.get("volume", 0))
-    
-    if liquidity < config["min_liquidity"] or volume < config["min_volume_24h"]:
-        return None
-    
-    return MarketSnapshot(
-        market_slug=slug,
-        question=market.get("question", ""),
-        city=city,
-        condition=condition,
-        target_date=target_date,
-        liquidity=liquidity,
-        volume_24h=volume,
-        outcomes=tuple(outcomes),
-        condition_id=market.get("conditionId", ""),
-        geo_group=geo_group
-    )
+# === DRAWDOWN ===
 
-def extract_date_from_question(question: str) -> Optional[datetime]:
-    """Extrae fecha de preguntas tipo 'Will it rain in NYC on January 15?'"""
-    # Patrones comunes en Polymarket
-    patterns = [
-        r'on\s+([A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?)',
-        r'for\s+([A-Za-z]+\s+\d{1,2})',
-        r'(\d{1,2}/\d{1,2}/\d{2,4})',
-        r'(\d{4}-\d{2}-\d{2})',
-    ]
+def update_drawdown(state: Dict):
+    state["peak_bankroll"] = max(state["peak_bankroll"], state["cash"])
+    drawdown = state["peak_bankroll"] - state["cash"]
+    state["max_drawdown"] = max(state["max_drawdown"], drawdown)
+    return state
+
+# === RESOLUCIÓN ===
+
+class ResolutionEngine:
+    def __init__(self):
+        self.session = requests.Session()
     
-    for pattern in patterns:
-        match = re.search(pattern, question, re.IGNORECASE)
-        if match:
-            date_str = match.group(1)
+    def fetch_market_resolution(self, condition_id: str) -> Optional[Dict]:
+        try:
+            url = f"{CONFIG['polymarket_gamma']}/{condition_id}"
+            resp = self.session.get(url, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            return {
+                "resolved": data.get("resolved", False),
+                "outcome": data.get("outcomeIndex"),
+                "resolution_time": data.get("resolutionTime"),
+                "question": data.get("question"),
+                "outcomes": data.get("outcomes", []),
+            }
+        except Exception as e:
+            logger.error(f"Error fetching resolution: {e}")
+            return None
+    
+    def resolve_position(self, pos: Position, market_data: Dict, state: Dict) -> bool:
+        if not market_data or not market_data.get("resolved"):
+            return False
+        
+        if pos.status != "open":
+            return False
+        
+        try:
+            winning_index = market_data["outcome"]
+            
+            if winning_index is None or not isinstance(winning_index, int):
+                logger.error(f"Índice inválido: {winning_index}")
+                return False
+            
+            if pos.outcome_index == winning_index:
+                payout = pos.shares * 1.0
+                pnl = payout - pos.stake
+                status = "won"
+                logger.info(f"✅ GANADA: {pos.market_slug} | +${pnl:.2f}")
+            else:
+                pnl = -pos.stake
+                status = "lost"
+                logger.info(f"❌ PERDIDA: {pos.market_slug} | ${pnl:.2f}")
+            
+            pos.status = status
+            pos.pnl = pnl
+            pos.resolved_at = datetime.now(timezone.utc).isoformat()
+            pos.resolution_price = 1.0 if status == "won" else 0.0
+            
+            state["cash"] += pos.stake + pnl
+            state["exposed"] -= pos.stake
+            state["exposed"] = max(0, state["exposed"])
+            state["lifetime_pnl"] += pnl
+            
+            if status == "won":
+                state["wins"] += 1
+                state["today_wins"] += 1
+                state["consecutive_losses"] = 0
+            else:
+                state["losses"] += 1
+                state["today_losses"] += 1
+                state["consecutive_losses"] += 1
+            
+            state = update_drawdown(state)
+            pos.pnl_applied = True
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error resolviendo: {e}")
+            return False
+    
+    def check_all_positions(self, positions: List[Position], state: Dict) -> List[Position]:
+        resolved_count = 0
+        
+        for pos in positions:
+            if pos.status != "open" or pos.pnl_applied:
+                continue
+            
             try:
-                parsed = dateparser.parse(date_str, settings={'PREFER_DATES_FROM': 'future'})
-                if parsed:
-                    return parsed.replace(tzinfo=timezone.utc)
+                target = datetime.fromisoformat(pos.target_date.replace('Z', '+00:00'))
+                if datetime.now(timezone.utc) < target + timedelta(hours=24):
+                    continue
             except:
                 continue
-    
-    # Default: mañana
-    return datetime.now(timezone.utc) + timedelta(days=1)
+            
+            market_data = self.fetch_market_resolution(pos.condition_id)
+            if not market_data:
+                continue
+            
+            if self.resolve_position(pos, market_data, state):
+                resolved_count += 1
+        
+        if resolved_count > 0:
+            logger.info(f"🎯 {resolved_count} resueltas | Cash: ${state['cash']:.2f}")
+        
+        return positions
 
-# === SISTEMA DE CLIMA ===
+# === WEATHER APIs ===
 
-class WeatherService:
-    """Servicio de clima con fallback entre providers"""
-    
-    def __init__(self, keys: Dict[str, str]):
-        self.keys = keys
+class WeatherAPI:
+    def __init__(self):
+        self.keys = {
+            "tomorrowio": os.getenv("TOMORROWIO_API_KEY"),
+            "weatherbit": os.getenv("WEATHERBIT_API_KEY")
+        }
         self.cache = {}
+        self.session = requests.Session()
+        
+        self.city_coords = {
+            "seattle": (47.6062, -122.3321),
+            "new york": (40.7128, -74.0060),
+            "nyc": (40.7128, -74.0060),
+            "boston": (42.3601, -71.0589),
+            "chicago": (41.8781, -87.6298),
+            "toronto": (43.6510, -79.3470),
+            "atlanta": (33.7490, -84.3880),
+            "dallas": (32.7767, -96.7970),
+            "denver": (39.7392, -104.9903),
+            "london": (51.5074, -0.1278),
+            "seoul": (37.5665, 126.9780),
+        }
+        
+        self.weatherbit_cities = {
+            "london": "London,UK",
+            "toronto": "Toronto,CA",
+            "seoul": "Seoul,KR",
+        }
     
-    @retry(max_tries=2)
-    def get_forecast(self, city: str, target_date: datetime) -> Optional[Dict]:
-        """Obtiene forecast agregado de múltiples fuentes"""
-        cache_key = f"{city}_{target_date.strftime('%Y%m%d')}"
+    def get_forecast(self, city: str, target_date: str) -> Optional[Dict]:
+        cache_key = f"{city.lower()}_{target_date}"
+        
         if cache_key in self.cache:
-            return self.cache[cache_key]
+            cached = self.cache[cache_key]
+            if (datetime.now(timezone.utc) - cached["time"]).seconds < 3600:
+                return cached["data"]
         
         forecasts = []
         
-        # Intentar cada API en orden
         if self.keys.get("tomorrowio"):
             try:
-                fc = self._tomorrowio(city, target_date)
+                fc = self._fetch_tomorrowio(city, target_date)
                 if fc: forecasts.append(("tomorrowio", fc))
             except Exception as e:
-                logger.debug(f"Tomorrow.io falló: {e}")
+                logger.debug(f"Tomorrow.io error: {e}")
         
-        if self.keys.get("weatherbit"):
+        if self.keys.get("weatherbit") and len(forecasts) == 0:
             try:
-                fc = self._weatherbit(city, target_date)
+                fc = self._fetch_weatherbit(city, target_date)
                 if fc: forecasts.append(("weatherbit", fc))
             except Exception as e:
-                logger.debug(f"Weatherbit falló: {e}")
+                logger.debug(f"Weatherbit error: {e}")
         
-        if len(forecasts) == 0:
+        if not forecasts:
             return None
         
-        # Promedio simple
-        avg = mean([f["temp"] for _, f in forecasts])
-        high = mean([f["high"] for _, f in forecasts])
-        low = mean([f["low"] for _, f in forecasts])
+        avg_temp = sum(f["temp"] for _, f in forecasts) / len(forecasts)
+        high_temp = sum(f.get("high", avg_temp) for _, f in forecasts) / len(forecasts)
+        low_temp = sum(f.get("low", avg_temp) for _, f in forecasts) / len(forecasts)
+        
+        temps = [f["temp"] for _, f in forecasts]
+        spread = max(temps) - min(temps) if len(temps) > 1 else 0
+        confidence = 2.0 if spread < 2 else (3.0 if spread < 4 else 4.0)
         
         result = {
-            "avg": avg,
-            "high": high,
-            "low": low,
+            "avg": round(avg_temp, 1),
+            "high": round(high_temp, 1),
+            "low": round(low_temp, 1),
             "providers": len(forecasts),
-            "spread": max(f["temp"] for _, f in forecasts) - min(f["temp"] for _, f in forecasts)
+            "spread": spread,
+            "confidence": confidence
         }
         
-        self.cache[cache_key] = result
+        self.cache[cache_key] = {
+            "time": datetime.now(timezone.utc),
+            "data": result
+        }
+        
         return result
     
-    def _tomorrowio(self, city: str, target_date: datetime) -> Optional[Dict]:
-        # Coordenadas aproximadas (mejor usar geocoding en producción)
-        coords = {
-            "new york": (40.71, -74.01), "nyc": (40.71, -74.01),
-            "london": (51.51, -0.13), "chicago": (41.88, -87.63),
-            "los angeles": (34.05, -118.24), "boston": (42.36, -71.06),
-            "miami": (25.76, -80.19), "seattle": (47.61, -122.33),
-            "dallas": (32.78, -96.80), "denver": (39.74, -104.99),
-            "san francisco": (37.77, -122.42), "atlanta": (33.75, -84.39),
-            "toronto": (43.65, -79.38), "tokyo": (35.68, 139.69)
-        }
+    def _fetch_tomorrowio(self, city: str, target_date: str) -> Optional[Dict]:
+        coords = self.city_coords.get(city.lower())
+        if not coords:
+            logger.error(f"Sin coordenadas: {city}")
+            return None
         
-        lat, lon = coords.get(city.lower(), (40.71, -74.01))
-        
-        params = {
-            "location": f"{lat},{lon}",
-            "apikey": self.keys["tomorrowio"],
-            "fields": "temperature,temperatureMax,temperatureMin",
-            "timesteps": "1d",
-            "startTime": target_date.strftime("%Y-%m-%dT06:00:00Z"),
-            "endTime": (target_date + timedelta(days=1)).strftime("%Y-%m-%dT06:00:00Z")
-        }
-        
-        resp = requests.get(TOMORROWIO_URL, params=params, timeout=10)
-        data = resp.json()
-        
-        timeline = data.get("timelines", {}).get("daily", [{}])[0]
-        vals = timeline.get("values", {})
-        
-        return {
-            "temp": vals.get("temperature", (vals.get("temperatureMax", 70) + vals.get("temperatureMin", 70)) / 2),
-            "high": vals.get("temperatureMax", 75),
-            "low": vals.get("temperatureMin", 65)
-        }
-    
-    def _weatherbit(self, city: str, target_date: datetime) -> Optional[Dict]:
-        params = {
-            "city": city,
-            "key": self.keys["weatherbit"],
-            "days": 7
-        }
-        
-        resp = requests.get(WEATHERBIT_URL, params=params, timeout=10)
-        data = resp.json()
-        
-        for day in data.get("data", []):
-            day_date = datetime.strptime(day["valid_date"], "%Y-%m-%d").date()
-            if day_date == target_date.date():
-                return {
-                    "temp": day.get("temp", 70),
-                    "high": day.get("max_temp", 75),
-                    "low": day.get("min_temp", 65)
-                }
-        return None
-
-# === MODELO DE PROBABILIDAD ===
-
-def calculate_fair_prob(forecast: Dict, outcome_label: str, condition: str) -> Optional[float]:
-    """Calcula probabilidad justa basada en forecast"""
-    if condition != "temperature":
-        return None  # TODO: implementar rain/snow
-    
-    # Extraer rango del label (ej: "Yes (70-75°F)" o "Yes, above 75°F")
-    numbers = re.findall(r'\d+', outcome_label)
-    if len(numbers) >= 2:
-        low, high = int(numbers[0]), int(numbers[1])
-    elif len(numbers) == 1:
-        # Caso above/below
-        num = int(numbers[0])
-        if "above" in outcome_label.lower() or "over" in outcome_label.lower():
-            low, high = num, 120
-        else:
-            low, high = -20, num
-    else:
-        return None
-    
-    # Modelo simple: probabilidad basada en distribución normal
-    mean_temp = forecast["avg"]
-    std_dev = 3.0  # Incertidumbre estándar de forecast a 24h
-    
-    # Z-scores
-    z_low = (low - mean_temp) / std_dev
-    z_high = (high - mean_temp) / std_dev
-    
-    # Probabilidad del rango
-    prob = normal_cdf(z_high) - normal_cdf(z_low)
-    
-    # Ajuste por spread entre providers (mayor spread = más incertidumbre)
-    if forecast.get("spread", 0) > 3:
-        prob = 0.5 + (prob - 0.5) * 0.8  # Regresar hacia 50%
-    
-    return max(0.01, min(0.99, prob))
-
-def normal_cdf(x: float) -> float:
-    """Aproximación de distribución normal acumulada"""
-    import math
-    return 0.5 * (1 + math.erf(x / math.sqrt(2)))
-
-# === KELLY MICRO-STAKE ===
-
-def calculate_position_size(
-    bankroll: float,
-    available_exposure: float,
-    fair_prob: float,
-    market_price: float,
-    edge: float,
-    config: Dict
-) -> float:
-    """Calcula tamaño de posición para micro-bankroll"""
-    
-    # Si no hay edge positivo, no apostar
-    if edge <= 0:
-        return 0.0
-    
-    # Odds implícitas
-    decimal_odds = 1 / market_price
-    net_odds = decimal_odds - 1
-    
-    if net_odds <= 0:
-        return 0.0
-    
-    # Kelly full: (p*(b+1) - 1) / b
-    win_prob = fair_prob
-    loss_prob = 1 - fair_prob
-    kelly_full = (win_prob * net_odds - loss_prob) / net_odds
-    
-    if kelly_full <= 0:
-        return 0.0
-    
-    # Fracción de Kelly muy pequeña para $30 bankroll
-    kelly_frac = kelly_full * config["kelly_fraction"]
-    
-    # Stake base
-    stake = bankroll * kelly_frac
-    
-    # Límites duros para $30
-    stake = min(stake, config["max_stake_per_trade"])
-    stake = min(stake, available_exposure)
-    stake = max(stake, 1.0)  # Mínimo $1 en Polymarket
-    
-    # No dejar bankroll debajo del buffer
-    if bankroll - stake < config["min_bankroll_buffer"]:
-        stake = bankroll - config["min_bankroll_buffer"]
-    
-    if stake < 1.0:
-        return 0.0
-    
-    return round(stake, 2)
-
-# === CORRELACIÓN ===
-
-def calculate_exposure_by_group(positions: List[Dict], config: Dict) -> Dict[str, float]:
-    """Calcula exposición actual por grupo geográfico"""
-    exposure = {}
-    for pos in positions:
-        group = pos.get("geo_group")
-        if group:
-            exposure[group] = exposure.get(group, 0) + pos.get("stake", 0)
-    return exposure
-
-# === EJECUCIÓN DE TRADES ===
-
-class PolymarketExecutor:
-    """Ejecutor de órdenes en Polymarket"""
-    
-    def __init__(self, mode: str, config: Dict):
-        self.mode = mode
-        self.config = config
-        self.client = None
-        
-        if mode == "live":
-            self._init_live_trading()
-    
-    def _init_live_trading(self):
-        """Inicializa conexión live"""
-        if not ClobClient:
-            raise ImportError("Instala: pip install py-clob-client")
-        
-        key = os.getenv("POLYMARKET_PRIVATE_KEY")
-        if not key:
-            raise ValueError("POLYMARKET_PRIVATE_KEY no configurada")
-        
-        # Validación básica
-        key_clean = key[2:] if key.startswith("0x") else key
-        if len(key_clean) != 64:
-            raise ValueError("Formato de clave privada inválido")
-        
-        self.client = ClobClient(
-            host=POLYMARKET_CLOB_URL,
-            chain_id=137,  # Polygon mainnet
-            private_key=key
-        )
-        
-        # Test conexión
         try:
-            self.client.get_api_key()
-            logger.info("✅ Conectado a Polymarket CLOB (LIVE)")
-        except Exception as e:
-            raise ConnectionError(f"No se pudo conectar a Polymarket: {e}")
-    
-    def execute(self, decision: TradeDecision) -> Tuple[bool, Dict]:
-        """Ejecuta una decisión de trading"""
-        if self.mode == "paper":
-            return self._paper_trade(decision)
-        else:
-            return self._live_trade(decision)
-    
-    def _paper_trade(self, decision: TradeDecision) -> Tuple[bool, Dict]:
-        """Simula trade en paper"""
-        shares = decision.stake / decision.market_price
-        
-        result = {
-            "mode": "paper",
-            "market": decision.market_slug,
-            "side": decision.side,
-            "token_id": decision.token_id,
-            "stake": decision.stake,
-            "price": decision.market_price,
-            "shares": round(shares, 4),
-            "edge": decision.edge,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-        
-        logger.info(f"📝 PAPER: {decision.city} | {decision.outcome_label} | "
-                   f"${decision.stake:.2f} @ {decision.market_price:.3f} | "
-                   f"Edge: {decision.edge:.1%}")
-        
-        return True, result
-    
-    def _live_trade(self, decision: TradeDecision) -> Tuple[bool, Dict]:
-        """Ejecuta trade real en Polymarket"""
-        try:
-            # Calcular shares
-            shares = decision.stake / decision.market_price
-            
-            # Usar limit order con pequeño buffer
-            limit_price = decision.market_price * 1.005  # 0.5% de buffer
-            limit_price = min(limit_price, 0.995)
-            
-            order_args = OrderArgs(
-                token_id=decision.token_id,
-                price=round(limit_price, 4),
-                size=round(shares, 4),
-                side=BUY if decision.side == "BUY" else SELL
-            )
-            
-            logger.info(f"🚀 Enviando orden: {order_args}")
-            
-            resp = self.client.create_order(order_args)
-            
-            if resp.get("success") or "orderID" in str(resp):
-                order_id = resp.get("orderID") or resp.get("id", "unknown")
-                logger.info(f"✅ Orden ejecutada: {order_id}")
-                
-                return True, {
-                    "mode": "live",
-                    "order_id": order_id,
-                    "status": "filled",
-                    "response": resp
-                }
-            else:
-                logger.error(f"❌ Orden rechazada: {resp}")
-                return False, {"error": "rejected", "response": resp}
-                
-        except Exception as e:
-            logger.exception(f"Error ejecutando orden: {e}")
-            return False, {"error": str(e)}
-
-# === LOOP PRINCIPAL ===
-
-def run_bot():
-    """Ejecución principal del bot de $30"""
-    logger.info("=" * 50)
-    logger.info("🤖 POLYMARKET WEATHER BOT - $30 EDITION")
-    logger.info(f"⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
-    logger.info("=" * 50)
-    
-    # 1. Config y estado
-    config = load_config()
-    state = load_state()
-    
-    # Reset diario
-    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    if state["last_date"] != today:
-        logger.info("🌅 Nuevo día - reseteando contadores")
-        state["daily_pnl"] = 0.0
-        state["trades_today"] = 0
-        state["last_date"] = today
-    
-    bankroll = state["bankroll"]
-    mode = os.getenv("TRADING_MODE", config["trading_mode"]).lower()
-    
-    logger.info(f"💰 Bankroll: ${bankroll:.2f} | Mode: {mode.upper()}")
-    logger.info(f"📊 Trades hoy: {state['trades_today']}/{config['max_trades_per_day']}")
-    
-    # 2. Circuit breakers
-    if bankroll < config["min_bankroll_buffer"]:
-        logger.error("🛑 Bankroll crítico - deteniendo")
-        return
-    
-    if state["trades_today"] >= config["max_trades_per_day"]:
-        logger.info("⏹️ Límite diario de trades alcanzado")
-        return
-    
-    # 3. APIs de clima
-    api_keys = {
-        "tomorrowio": os.getenv("TOMORROWIO_API_KEY"),
-        "weatherbit": os.getenv("WEATHERBIT_API_KEY")
-    }
-    
-    if not any(api_keys.values()):
-        logger.error("❌ Se requiere al menos una API de clima")
-        return
-    
-    # 4. Inicializar servicios
-    weather = WeatherService(api_keys)
-    executor = PolymarketExecutor(mode, config)
-    
-    # 5. Fetch mercados
-    try:
-        markets = fetch_polymarket_markets(500)
-    except Exception as e:
-        logger.error(f"Error obteniendo mercados: {e}")
-        return
-    
-    # 6. Filtrar mercados climáticos
-    weather_markets = []
-    for m in markets:
-        parsed = parse_weather_market(m, config)
-        if parsed:
-            weather_markets.append(parsed)
-    
-    logger.info(f"🌤️ {len(weather_markets)} mercados climáticos encontrados")
-    
-    if not weather_markets:
-        logger.info("No hay mercados para analizar")
-        return
-    
-    # 7. Calcular exposición actual
-    current_exposure = sum(p.get("stake", 0) for p in state["positions"] if p.get("status") == "open")
-    exposure_by_group = calculate_exposure_by_group(state["positions"], config)
-    available_exposure = config["max_daily_exposure"] - current_exposure
-    
-    logger.info(f"💵 Exposición actual: ${current_exposure:.2f} | "
-               f"Disponible: ${available_exposure:.2f}")
-    
-    # 8. Analizar oportunidades
-    opportunities = []
-    
-    for market in weather_markets:
-        # Verificar correlación
-        if market.geo_group:
-            group_exp = exposure_by_group.get(market.geo_group, 0)
-            if group_exp > config["max_daily_exposure"] * 0.5:
-                continue  # Ya tenemos exposición en esta región
-        
-        # Obtener forecast
-        forecast = weather.get_forecast(market.city, market.target_date)
-        if not forecast:
-            continue
-        
-        # Analizar cada outcome
-        for outcome in market.outcomes:
-            token_id = outcome.get("token_id", "")
-            if not token_id:
-                continue
-            
-            price = outcome["price"]
-            side = "BUY" if price < 0.5 else "SELL"
-            
-            # Calcular prob justa
-            fair_prob = calculate_fair_prob(forecast, outcome["label"], market.condition)
-            if not fair_prob:
-                continue
-            
-            # Calcular edge
-            if side == "BUY":
-                edge = (fair_prob - price) / price if price > 0 else 0
-            else:  # SELL (short)
-                edge = (price - fair_prob) / fair_prob if fair_prob > 0 else 0
-            
-            if edge < config["min_edge_pct"]:
-                continue
-            
-            # Calcular stake
-            stake = calculate_position_size(
-                bankroll, available_exposure, fair_prob, price, edge, config
-            )
-            
-            if stake <= 0:
-                continue
-            
-            opportunities.append({
-                "market": market,
-                "outcome": outcome,
-                "forecast": forecast,
-                "fair_prob": fair_prob,
-                "edge": edge,
-                "stake": stake,
-                "side": side
-            })
-    
-    # 9. Seleccionar mejores oportunidades
-    if not opportunities:
-        logger.info("🔍 No se encontraron oportunidades con edge suficiente")
-        return
-    
-    # Ordenar por edge y diversificar
-    opportunities.sort(key=lambda x: x["edge"], reverse=True)
-    
-    # Tomar máximo 2 para no concentrar
-    selected = opportunities[:2]
-    
-    logger.info(f"🎯 {len(selected)} oportunidades seleccionadas")
-    
-    # 10. Ejecutar trades
-    executed = []
-    for opp in selected:
-        # Verificar límites
-        if state["trades_today"] >= config["max_trades_per_day"]:
-            break
-        
-        if current_exposure + opp["stake"] > config["max_daily_exposure"]:
-            continue
-        
-        # Crear decisión
-        decision = TradeDecision(
-            market_slug=opp["market"].market_slug,
-            city=opp["market"].city,
-            condition=opp["market"].condition,
-            target_date=opp["market"].target_date,
-            forecast_avg=opp["forecast"]["avg"],
-            forecast_high=opp["forecast"]["high"],
-            forecast_low=opp["forecast"]["low"],
-            outcome_label=opp["outcome"]["label"],
-            token_id=opp["outcome"]["token_id"],
-            side=opp["side"],
-            fair_prob=opp["fair_prob"],
-            market_price=opp["outcome"]["price"],
-            edge=opp["edge"],
-            stake=opp["stake"],
-            ev_per_dollar=opp["edge"],
-            provider_count=opp["forecast"]["providers"],
-            correlation_penalty=1.0,
-            timestamp=datetime.now(timezone.utc)
-        )
-        
-        # Ejecutar
-        success, result = executor.execute(decision)
-        
-        if success:
-            # Actualizar estado
-            cost = decision.stake
-            bankroll -= cost
-            current_exposure += cost
-            state["trades_today"] += 1
-            state["total_trades"] += 1
-            
-            # Guardar posición
-            position = {
-                "market_slug": decision.market_slug,
-                "token_id": decision.token_id,
-                "city": decision.city,
-                "geo_group": opp["market"].geo_group,
-                "entry_price": decision.market_price,
-                "stake": cost,
-                "side": decision.side,
-                "status": "open",
-                "entry_time": datetime.now(timezone.utc).isoformat(),
-                "target_date": decision.target_date.isoformat()
+            params = {
+                "location": f"{coords[0]},{coords[1]}",
+                "fields": "temperature,temperatureMax,temperatureMin",
+                "units": "imperial",
+                "timesteps": "1d",
+                "apikey": self.keys["tomorrowio"],
+                "startTime": f"{target_date}T00:00:00Z",
+                "endTime": f"{target_date}T23:59:59Z"
             }
-            state["positions"].append(position)
-            executed.append(decision)
             
-            logger.info(f"✅ Trade #{state['trades_today']} ejecutado: "
-                       f"{decision.city} {decision.outcome_label} | "
-                       f"${cost:.2f} | Edge: {decision.edge:.1%}")
+            resp = self.session.get(CONFIG["tomorrowio_url"], params=params, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            timelines = data.get("data", {}).get("timelines", [])
+            if not timelines:
+                return None
+            
+            intervals = timelines[0].get("intervals", [])
+            if not intervals:
+                return None
+            
+            vals = intervals[0].get("values", {})
+            
+            return {
+                "temp": vals.get("temperature", 70),
+                "high": vals.get("temperatureMax", 75),
+                "low": vals.get("temperatureMin", 65),
+            }
+            
+        except Exception as e:
+            logger.error(f"Error Tomorrow.io: {e}")
+            return None
     
-    # 11. Guardar estado
-    state["bankroll"] = round(bankroll, 2)
-    save_state(state)
+    def _fetch_weatherbit(self, city: str, target_date: str) -> Optional[Dict]:
+        try:
+            city_query = self.weatherbit_cities.get(city.lower(), city)
+            
+            params = {
+                "city": city_query,
+                "key": self.keys["weatherbit"],
+                "days": 16,
+                "units": "I"
+            }
+            
+            resp = self.session.get(CONFIG["weatherbit_url"], params=params, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            for day in data.get("data", []):
+                if day.get("valid_date") == target_date:
+                    return {
+                        "temp": day.get("temp", 70),
+                        "high": day.get("max_temp", 75),
+                        "low": day.get("min_temp", 65),
+                    }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error Weatherbit: {e}")
+            return None
+
+# === PARSING ===
+
+def parse_outcome_index(label: str, outcomes_list: List[Dict]) -> int:
+    label_clean = label.lower().strip()
     
-    # 12. Reporte final
-    logger.info("=" * 50)
-    logger.info(f"📈 SESIÓN FINALIZADA")
-    logger.info(f"Trades ejecutados: {len(executed)}")
-    logger.info(f"Bankroll: ${bankroll:.2f} ({bankroll - config['initial_bankroll']:+.2f})")
-    logger.info(f"Exposición restante: ${config['max_daily_exposure'] - current_exposure:.2f}")
-    logger.info("=" * 50)
+    for i, out in enumerate(outcomes_list):
+        out_name = out.get("name", out.get("label", "")).lower().strip()
+        if out_name == label_clean or label_clean in out_name:
+            return i
     
-    # Output JSON para piping
-    print(json.dumps({
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "trades": len(executed),
-        "bankroll": bankroll,
-        "exposure": current_exposure,
-        "mode": mode
-    }))
+    return 0
+
+def parse_temp_range(label: str) -> Optional[Dict]:
+    label_lower = label.lower()
+    
+    patterns = [
+        (r'(\d+)\s*-\s*(\d+)', 'range'),
+        (r'above\s*(\d+)', 'above'),
+        (r'over\s*(\d+)', 'above'),
+        (r'below\s*(\d+)', 'below'),
+        (r'under\s*(\d+)', 'below'),
+        (r'exactly\s*(\d+)', 'exact'),
+        (r'(\d+)\s*(?:°|degrees?)', 'exact')
+    ]
+    
+    for pattern, ptype in patterns:
+        match = re.search(pattern, label_lower)
+        if match:
+            if ptype == 'range':
+                low, high = int(match.group(1)), int(match.group(2))
+                return {"low": low, "high": high, "type": "range", "center": (low+high)/2}
+            elif ptype == 'above':
+                val = int(match.group(1))
+                return {"low": val, "high": val+25, "type": "above", "center": val+5}
+            elif ptype == 'below':
+                val = int(match.group(1))
+                return {"low": val-25, "high": val, "type": "below", "center": val-5}
+            else:
+                val = int(match.group(1))
+                return {"low": val-2, "high": val+2, "type": "exact", "center": val}
+    
+    return None
+
+# === GENERACIÓN DE SEÑALES ===
+
+class SignalGenerator:
+    def __init__(self):
+        self.weather = WeatherAPI()
+    
+    def fetch_polymarket_weather(self) -> List[Dict]:
+        try:
+            params = {
+                "active": "true",
+                "liquidity": CONFIG["min_liquidity"],
+                "limit": 300
+            }
+            resp = requests.get(CONFIG["polymarket_gamma"], params=params, timeout=15)
+            resp.raise_for_status()
+            markets = resp.json()
+            
+            weather_markets = []
+            for m in markets:
+                q = m.get("question", "").lower()
+                if not any(x in q for x in ["temperature", "high", "low", "°f", "°c", "degrees"]):
+                    continue
+                
+                city = None
+                for c in CONFIG["cities"]:
+                    if c.lower() in q:
+                        city = c
+                        break
+                
+                if not city:
+                    continue
+                
+                # CORREGIDO: Dateparser maneja el año automáticamente
+                date_match = re.search(
+                    r'(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s*\d{1,2}',
+                    q,
+                    re.IGNORECASE
+                )
+                
+                if date_match:
+                    try:
+                        # dateparser con 'future' elige el año correcto automáticamente
+                        parsed = dateparser.parse(
+                            date_match.group(0), 
+                            settings={'PREFER_DATES_FROM': 'future'}
+                        )
+                        if not parsed:
+                            parsed = datetime.now(timezone.utc) + timedelta(days=1)
+                    except:
+                        parsed = datetime.now(timezone.utc) + timedelta(days=1)
+                else:
+                    parsed = datetime.now(timezone.utc) + timedelta(days=1)
+                
+                weather_markets.append({
+                    "slug": m["slug"],
+                    "condition_id": m.get("conditionId"),
+                    "question": m["question"],
+                    "city": city,
+                    "outcomes": m.get("outcomes", []),
+                    "liquidity": m.get("liquidity", 0),
+                    "target_date": parsed.strftime("%Y-%m-%d"),
+                    "end_date_iso": m.get("endDate")
+                })
+            
+            return weather_markets
+            
+        except Exception as e:
+            logger.error(f"Error fetching markets: {e}")
+            return []
+    
+    def calculate_edge(self, forecast: Dict, outcome: Dict, market: Dict) -> Optional[float]:
+        try:
+            market_prob = outcome.get("price", 0)
+            if market_prob <= 0.01 or market_prob >= 0.99:
+                return None
+            
+            label = outcome.get("name", outcome.get("label", ""))
+            temp_range = parse_temp_range(label)
+            if not temp_range:
+                return None
+            
+            from statistics import NormalDist
+            mean = forecast["avg"]
+            std = forecast["confidence"]
+            
+            z_low = (temp_range["low"] - mean) / std
+            z_high = (temp_range["high"] - mean) / std
+            
+            nd = NormalDist(0, 1)
+            fair_prob = nd.cdf(z_high) - nd.cdf(z_low)
+            
+            if forecast.get("providers", 1) > 1 and forecast.get("spread", 0) > 3:
+                fair_prob = 0.5 + (fair_prob - 0.5) * 0.8
+            
+            edge = (fair_prob - market_prob) / market_prob
+            
+            return edge
+            
+        except Exception as e:
+            logger.debug(f"Error calculando edge: {e}")
+            return None
+    
+    def generate_signals(self) -> List[Dict]:
+        markets = self.fetch_polymarket_weather()
+        signals = []
+        
+        for market in markets:
+            try:
+                if market.get("end_date_iso"):
+                    end = datetime.fromisoformat(market["end_date_iso"].replace('Z', '+00:00'))
+                else:
+                    end = datetime.strptime(market["target_date"], "%Y-%m-%d")
+                    end = end.replace(tzinfo=timezone.utc)
+                
+                hours_to_close = (end - datetime.now(timezone.utc)).total_seconds() / 3600
+                if not (6 <= hours_to_close <= 24):
+                    continue
+            except:
+                continue
+            
+            forecast = self.weather.get_forecast(market["city"], market["target_date"])
+            if not forecast:
+                continue
+            
+            for outcome in market["outcomes"]:
+                price = outcome.get("price", 0)
+                if not (0.05 <= price <= 0.95):
+                    continue
+                
+                edge = self.calculate_edge(forecast, outcome, market)
+                if edge is None or edge < CONFIG["min_edge"]:
+                    continue
+                
+                outcome_index = parse_outcome_index(
+                    outcome.get("name", outcome.get("label", "")),
+                    market["outcomes"]
+                )
+                
+                signals.append({
+                    "market_slug": market["slug"],
+                    "condition_id": market["condition_id"],
+                    "question": market["question"],
+                    "city": market["city"],
+                    "outcome": outcome.get("name", outcome.get("label")),
+                    "outcome_index": outcome_index,
+                    "token_id": outcome.get("token_id"),
+                    "price": price,
+                    "edge": edge,
+                    "forecast": forecast,
+                    "hours_to_close": hours_to_close
+                })
+        
+        signals.sort(key=lambda x: x["edge"], reverse=True)
+        return signals
+
+# === EJECUTOR ===
+
+class TradeExecutor:
+    def __init__(self):
+        self.mode = os.getenv("TRADING_MODE", "paper")
+    
+    def execute(self, signal: Dict, stake: float) -> Tuple[bool, Optional[Position]]:
+        if self.mode == "paper":
+            return self._paper_trade(signal, stake)
+        return self._live_trade(signal, stake)
+    
+    def _paper_trade(self, signal: Dict, stake: float) -> Tuple[bool, Optional[Position]]:
+        pos = Position(
+            position_id=f"paper_{int(time.time() * 1000)}",
+            market_slug=signal["market_slug"],
+            condition_id=signal["condition_id"],
+            question=signal["question"],
+            city=signal["city"],
+            outcome=signal["outcome"],
+            outcome_index=signal["outcome_index"],
+            token_id=signal["token_id"],
+            side="BUY",
+            entry_price=signal["price"],
+            shares=round(stake / signal["price"], 4),
+            stake=stake,
+            trade_type="core" if stake > 1.5 else "lottery",
+            edge_at_entry=signal["edge"],
+            entry_time=datetime.now(timezone.utc).isoformat(),
+            target_date=(datetime.now(timezone.utc) + 
+                        timedelta(hours=signal["hours_to_close"])).isoformat(),
+            status="open",
+            pnl_applied=False
+        )
+        
+        logger.info(f"📝 PAPER: {signal['city']} | {signal['outcome'][:40]}... | "
+                   f"${stake:.2f} @ {signal['price']:.0%} | Edge: {signal['edge']:.1%}")
+        
+        return True, pos
+    
+    def _live_trade(self, signal: Dict, stake: float) -> Tuple[bool, Optional[Position]]:
+        logger.warning("Live trading requiere py-clob-client")
+        return False, None
+
+# === BOT PRINCIPAL ===
+
+class SurvivalBot:
+    def __init__(self):
+        self.state = state_mgr.load_state()
+        self.positions = state_mgr.load_positions()
+        self.signals = SignalGenerator()
+        self.executor = TradeExecutor()
+        self.resolver = ResolutionEngine()
+        
+        self.state = check_daily_reset(self.state)
+        
+        open_pos = len([p for p in self.positions if p.status == "open"])
+        logger.info(f"🚀 Bot iniciado | Cash: ${self.state['cash']:.2f} | Open: {open_pos}")
+    
+    def calculate_position_size(self, edge: float, confidence: int) -> float:
+        if edge < CONFIG["min_edge"]:
+            return 0.0
+        
+        size = CONFIG["min_trade"]
+        
+        current_wr = self.state["wins"] / max(self.state["total_trades"], 1)
+        if (edge > 0.40 and confidence >= 2 and 
+            current_wr > 0.60 and 
+            self.state["consecutive_losses"] == 0):
+            size = CONFIG["max_trade"]
+        
+        available = self.state["cash"] - self.state["exposed"]
+        max_allowed = available * 0.20
+        size = min(size, max_allowed)
+        
+        if self.state["consecutive_losses"] > 0:
+            size = CONFIG["min_trade"]
+        
+        return size if size >= CONFIG["min_trade"] else 0.0
+    
+    def can_trade(self) -> bool:
+        if self.state["today_trades"] >= CONFIG["absolute_max_day"]:
+            return False
+        
+        if self.state["today_losses"] >= CONFIG["stop_loss_day"]:
+            return False
+        
+        if self.state["last_trade_time"]:
+            last = datetime.fromisoformat(self.state["last_trade_time"])
+            hours_since = (datetime.now(timezone.utc) - last).total_seconds() / 3600
+            if hours_since < CONFIG["cooldown_hours"]:
+                return False
+        
+        available = self.state["cash"] - self.state["exposed"]
+        if available < CONFIG["min_trade"]:
+            return False
+        
+        return True
+    
+    def daily_report(self):
+        wr = (self.state["wins"] / max(self.state["total_trades"], 1)) * 100
+        today_wr = ((self.state["today_wins"] / max(self.state["today_trades"], 1) * 100)
+                   if self.state["today_trades"] > 0 else 0)
+        
+        print("\n" + "="*60)
+        print(f"📊 {self.state['current_date']} | Cash: ${self.state['cash']:.2f}")
+        print(f"📈 Lifetime: {self.state['wins']}W/{self.state['losses']}L ({wr:.1f}%)")
+        print(f"🎯 Hoy: {self.state['today_wins']}W/{self.state['today_losses']}L ({today_wr:.1f}%)")
+        print(f"💼 Exposed: ${self.state['exposed']:.2f} | P&L: ${self.state['lifetime_pnl']:+.2f}")
+        print(f"📉 Max Drawdown: ${self.state['max_drawdown']:.2f}")
+        
+        if self.state["cash"] < 20:
+            print("🚨 CRÍTICO: Cash < $20")
+        if wr < 55 and self.state["total_trades"] > 10:
+            print("🚨 ESTRATEGIA FALLIDA: WR < 55%")
+        if wr > 65 and self.state["total_trades"] > 20:
+            print("✅ LISTO PARA ESCALAR: Añade fondos hasta $100")
+        print("="*60)
+    
+    def run(self):
+        # 1. Resolver posiciones
+        self.positions = self.resolver.check_all_positions(self.positions, self.state)
+        
+        # 2. Verificar si podemos trade
+        if not self.can_trade():
+            self.daily_report()
+            state_mgr.save_state(self.state)
+            state_mgr.save_positions(self.positions)
+            return
+        
+        # 3. Generar señales
+        signals = self.signals.generate_signals()
+        if not signals:
+            logger.info("No hay señales con edge suficiente")
+            self.daily_report()
+            return
+        
+        # 4. Ejecutar mejor señal
+        best = signals[0]
+        stake = self.calculate_position_size(best["edge"], best["forecast"]["providers"])
+        
+        if stake <= 0:
+            self.daily_report()
+            return
+        
+        success, position = self.executor.execute(best, stake)
+        
+        if success and position:
+            self.positions.append(position)
+            self.state["cash"] -= stake
+            self.state["exposed"] += stake
+            self.state["today_trades"] += 1
+            self.state["total_trades"] += 1
+            self.state["last_trade_time"] = datetime.now(timezone.utc).isoformat()
+            
+            self.state = update_drawdown(self.state)
+            logger.info(f"✅ Trade ejecutado: ${stake:.2f}")
+        
+        # 5. Guardar todo
+        state_mgr.save_state(self.state)
+        state_mgr.save_positions(self.positions)
+        self.daily_report()
+
+# === MAIN CON SCHEDULER ===
+
+def run_single_cycle():
+    """Ejecuta un ciclo del bot"""
+    try:
+        bot = SurvivalBot()
+        bot.run()
+        return True
+    except Exception as e:
+        logger.exception("Error en ciclo")
+        return False
 
 if __name__ == "__main__":
-    try:
-        run_bot()
-    except KeyboardInterrupt:
-        logger.info("Detenido por usuario")
-    except Exception as e:
-        logger.exception("Error fatal")
-        raise
+    import sys
+    
+    # Modo single run (default)
+    if len(sys.argv) > 1 and sys.argv[1] == "--once":
+        run_single_cycle()
+    else:
+        # Modo scheduler
+        logger.info("🤖 MODO SCHEDULER - Ejecutando cada hora")
+        logger.info(f"   Intervalo: {CONFIG['run_interval_seconds']} segundos")
+        logger.info("   Presiona Ctrl+C para detener")
+        
+        start_time = time.time()
+        max_runtime = CONFIG["max_runtime_hours"] * 3600
+        
+        cycle_count = 0
+        
+        while True:
+            cycle_count += 1
+            logger.info(f"\n{'='*50}")
+            logger.info(f"⏰ CICLO #{cycle_count} - {datetime.now(timezone.utc).strftime('%H:%M UTC')}")
+            logger.info(f"{'='*50}")
+            
+            run_single_cycle()
+            
+            elapsed = time.time() - start_time
+            if elapsed > max_runtime:
+                logger.info("⏰ Tiempo máximo alcanzado (24h). Reiniciar manualmente.")
+                break
+            
+            logger.info(f"😴 Durmiendo {CONFIG['run_interval_seconds']/3600:.1f} horas...")
+            time.sleep(CONFIG["run_interval_seconds"])
