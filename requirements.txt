@@ -1,4 +1,2 @@
 requests
-scipy
-urllib3
-numpy
+dateparser
