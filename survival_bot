@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Polymarket Weather Bot - $30 Survival Edition v2.4 FINAL
-API Keys configuradas: Ready to run
+Polymarket Weather Bot - TESTING MODE (Agresivo para acumular datos rápido)
+API Keys: Tomorrow.io + Weatherbit configuradas
 """
 
 import json
@@ -17,30 +17,38 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from collections import defaultdict
 
-# === CONFIGURACIÓN ===
+# === CONFIGURACIÓN TESTING AGRESIVO ===
 
 CONFIG = {
     "bankroll": 30.0,
     "min_trade": 1.0,
     "max_trade": 2.0,
-    "absolute_max_day": 3,
-    "stop_loss_day": 2,
-    "min_edge": 0.30,
-    "cooldown_hours": 4,
+    "absolute_max_day": 5,       # ← AUMENTADO: 5 trades/día (vs 3)
+    "stop_loss_day": 3,          # ← AUMENTADO: Tolerancia 3 pérdidas
+    "min_edge": 0.15,            # ← BAJADO: 15% edge mínimo (vs 30%)
+    "cooldown_hours": 2,         # ← BAJADO: 2h entre trades (vs 4h)
     
     # APIs
     "polymarket_gamma": "https://gamma-api.polymarket.com/markets",
     "tomorrowio_url": "https://api.tomorrow.io/v4/timelines",
     "weatherbit_url": "https://api.weatherbit.io/v2.0/forecast/daily",
     
-    # Scheduler
-    "run_interval_seconds": 3600,
+    # Scheduler más frecuente para testing
+    "run_interval_seconds": 1800,  # ← 30 min (vs 1 hora)
     "max_runtime_hours": 24,
     
-    # Filtros
-    "min_liquidity": 1000,
+    # Filtros relajados
+    "min_liquidity": 500,        # ← BAJADO: $500 (vs $1000)
     "cities": ["Seattle", "New York", "NYC", "Boston", "Chicago", 
-               "Toronto", "Atlanta", "Dallas", "Denver", "London", "Seoul"],
+               "Toronto", "Atlanta", "Dallas", "Denver", "London", "Seoul",
+               "Miami", "Houston", "Phoenix", "Philadelphia", "San Francisco",
+               "Detroit", "Minneapolis", "Portland", "Las Vegas"],  # ← EXPANDIDO
+    
+    # Más keywords para capturar mercados
+    "weather_keywords": ["temperature", "high", "low", "°f", "°c", "degrees",
+                        "rain", "snow", "precipitation", "sunny", "cloudy",
+                        "storm", "wind", "humidity", "heat", "cold", "freezing",
+                        "boiling", "mild", "warm", "chilly", "frost", "drizzle"],
     
     # Archivos
     "state_file": "survival_state.json",
@@ -288,18 +296,18 @@ class ResolutionEngine:
         
         return positions
 
-# === WEATHER APIs CON TUS KEYS ===
+# === WEATHER APIs ===
 
 class WeatherAPI:
     def __init__(self):
-        # TUS API KEYS CONFIGURADAS
         self.keys = {
-            "tomorrowio": "RfRDKxiUphzUEYfFcXsDuwBTxBZCrvJ7",  # ← TU KEY
-            "weatherbit": "a40d62b402ab45b684656d419ef87ceb"     # ← TU KEY
+            "tomorrowio": "RfRDKxiUphzUEYfFcXsDuwBTxBZCrvJ7",
+            "weatherbit": "a40d62b402ab45b684656d419ef87ceb"
         }
         self.cache = {}
         self.session = requests.Session()
         
+        # EXPANDIDO: Más ciudades
         self.city_coords = {
             "seattle": (47.6062, -122.3321),
             "new york": (40.7128, -74.0060),
@@ -312,6 +320,15 @@ class WeatherAPI:
             "denver": (39.7392, -104.9903),
             "london": (51.5074, -0.1278),
             "seoul": (37.5665, 126.9780),
+            "miami": (25.7617, -80.1918),
+            "houston": (29.7604, -95.3698),
+            "phoenix": (33.4484, -112.0740),
+            "philadelphia": (39.9526, -75.1652),
+            "san francisco": (37.7749, -122.4194),
+            "detroit": (42.3314, -83.0458),
+            "minneapolis": (44.9778, -93.2650),
+            "portland": (45.5152, -122.6784),
+            "las vegas": (36.1699, -115.1398),
         }
         
         self.weatherbit_cities = {
@@ -330,31 +347,28 @@ class WeatherAPI:
         
         forecasts = []
         
-        # Intentar Tomorrow.io primero
         if self.keys.get("tomorrowio"):
             try:
                 fc = self._fetch_tomorrowio(city, target_date)
                 if fc: 
                     forecasts.append(("tomorrowio", fc))
-                    logger.info(f"✅ Tomorrow.io OK: {city} {target_date}")
+                    logger.info(f"✅ Tomorrow.io OK: {city}")
             except Exception as e:
                 logger.warning(f"Tomorrow.io falló: {e}")
         
-        # Fallback a Weatherbit
         if len(forecasts) == 0 and self.keys.get("weatherbit"):
             try:
                 fc = self._fetch_weatherbit(city, target_date)
                 if fc: 
                     forecasts.append(("weatherbit", fc))
-                    logger.info(f"✅ Weatherbit OK: {city} {target_date}")
+                    logger.info(f"✅ Weatherbit OK: {city}")
             except Exception as e:
                 logger.warning(f"Weatherbit falló: {e}")
         
         if not forecasts:
-            logger.error(f"❌ Sin forecast para {city} {target_date}")
+            logger.error(f"❌ Sin forecast para {city}")
             return None
         
-        # Promediar resultados
         avg_temp = sum(f["temp"] for _, f in forecasts) / len(forecasts)
         high_temp = sum(f.get("high", avg_temp) for _, f in forecasts) / len(forecasts)
         low_temp = sum(f.get("low", avg_temp) for _, f in forecasts) / len(forecasts)
@@ -391,24 +405,21 @@ class WeatherAPI:
                 "fields": "temperature,temperatureMax,temperatureMin",
                 "units": "imperial",
                 "timesteps": "1d",
-                "apikey": self.keys["tomorrowio"],  # TU KEY USADA AQUÍ
+                "apikey": self.keys["tomorrowio"],
                 "startTime": f"{target_date}T00:00:00Z",
                 "endTime": f"{target_date}T23:59:59Z"
             }
             
-            logger.debug(f"Calling Tomorrow.io: {city} {target_date}")
             resp = self.session.get(CONFIG["tomorrowio_url"], params=params, timeout=15)
             resp.raise_for_status()
             data = resp.json()
             
             timelines = data.get("data", {}).get("timelines", [])
             if not timelines:
-                logger.error("Tomorrow.io: No timelines")
                 return None
             
             intervals = timelines[0].get("intervals", [])
             if not intervals:
-                logger.error("Tomorrow.io: No intervals")
                 return None
             
             vals = intervals[0].get("values", {})
@@ -419,14 +430,6 @@ class WeatherAPI:
                 "low": vals.get("temperatureMin", 65),
             }
             
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 401:
-                logger.error("❌ Tomorrow.io: API Key inválida")
-            elif e.response.status_code == 429:
-                logger.error("❌ Tomorrow.io: Rate limit excedido")
-            else:
-                logger.error(f"Error Tomorrow.io HTTP {e.response.status_code}: {e}")
-            return None
         except Exception as e:
             logger.error(f"Error Tomorrow.io: {e}")
             return None
@@ -437,12 +440,11 @@ class WeatherAPI:
             
             params = {
                 "city": city_query,
-                "key": self.keys["weatherbit"],  # TU KEY USADA AQUÍ
+                "key": self.keys["weatherbit"],
                 "days": 16,
                 "units": "I"
             }
             
-            logger.debug(f"Calling Weatherbit: {city} {target_date}")
             resp = self.session.get(CONFIG["weatherbit_url"], params=params, timeout=15)
             resp.raise_for_status()
             data = resp.json()
@@ -455,15 +457,8 @@ class WeatherAPI:
                         "low": day.get("min_temp", 65),
                     }
             
-            logger.error(f"Weatherbit: Fecha {target_date} no encontrada")
             return None
             
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 403:
-                logger.error("❌ Weatherbit: API Key inválida o expirada")
-            else:
-                logger.error(f"Error Weatherbit HTTP {e.response.status_code}: {e}")
-            return None
         except Exception as e:
             logger.error(f"Error Weatherbit: {e}")
             return None
@@ -519,11 +514,11 @@ class SignalGenerator:
     
     def fetch_polymarket_weather(self) -> List[Dict]:
         try:
-            logger.info("🔍 Buscando mercados en Polymarket...")
+            logger.info("🔍 Buscando mercados...")
             params = {
                 "active": "true",
                 "liquidity": CONFIG["min_liquidity"],
-                "limit": 300
+                "limit": 500  # ← AUMENTADO
             }
             resp = requests.get(CONFIG["polymarket_gamma"], params=params, timeout=15)
             resp.raise_for_status()
@@ -534,7 +529,9 @@ class SignalGenerator:
             weather_markets = []
             for m in markets:
                 q = m.get("question", "").lower()
-                if not any(x in q for x in ["temperature", "high", "low", "°f", "°c", "degrees"]):
+                
+                # ← EXPANDIDO: Más keywords
+                if not any(kw in q for kw in CONFIG["weather_keywords"]):
                     continue
                 
                 city = None
@@ -546,7 +543,6 @@ class SignalGenerator:
                 if not city:
                     continue
                 
-                # Date parsing con dateparser
                 date_match = re.search(
                     r'(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s*\d{1,2}',
                     q,
@@ -577,7 +573,7 @@ class SignalGenerator:
                     "end_date_iso": m.get("endDate")
                 })
             
-            logger.info(f"   {len(weather_markets)} mercados de clima encontrados")
+            logger.info(f"   ✅ {len(weather_markets)} mercados de clima")
             return weather_markets
             
         except Exception as e:
@@ -725,7 +721,10 @@ class SurvivalBot:
         self.state = check_daily_reset(self.state)
         
         open_pos = len([p for p in self.positions if p.status == "open"])
-        logger.info(f"🚀 Bot iniciado | Cash: ${self.state['cash']:.2f} | Open: {open_pos}")
+        logger.info(f"🚀 TESTING MODE | Cash: ${self.state['cash']:.2f} | Open: {open_pos}")
+        logger.info(f"   Config: edge>{CONFIG['min_edge']:.0%}, "
+                   f"max{CONFIG['absolute_max_day']}trades/day, "
+                   f"cooldown{CONFIG['cooldown_hours']}h")
     
     def calculate_position_size(self, edge: float, confidence: int) -> float:
         if edge < CONFIG["min_edge"]:
@@ -734,34 +733,34 @@ class SurvivalBot:
         size = CONFIG["min_trade"]
         
         current_wr = self.state["wins"] / max(self.state["total_trades"], 1)
-        if (edge > 0.40 and confidence >= 2 and 
-            current_wr > 0.60 and 
-            self.state["consecutive_losses"] == 0):
+        if (edge > 0.25 and confidence >= 2 and  # ← MÁS PERMISIVO
+            current_wr > 0.55 and                 # ← MÁS PERMISIVO
+            self.state["consecutive_losses"] < 2): # ← MÁS PERMISIVO
             size = CONFIG["max_trade"]
         
         available = self.state["cash"] - self.state["exposed"]
-        max_allowed = available * 0.20
+        max_allowed = available * 0.25  # ← AUMENTADO: 25% (vs 20%)
         size = min(size, max_allowed)
         
-        if self.state["consecutive_losses"] > 0:
+        if self.state["consecutive_losses"] >= 2:
             size = CONFIG["min_trade"]
         
         return size if size >= CONFIG["min_trade"] else 0.0
     
     def can_trade(self) -> bool:
         if self.state["today_trades"] >= CONFIG["absolute_max_day"]:
-            logger.info("⛔ Límite diario alcanzado")
+            logger.info(f"⛔ Límite diario: {self.state['today_trades']}/{CONFIG['absolute_max_day']}")
             return False
         
         if self.state["today_losses"] >= CONFIG["stop_loss_day"]:
-            logger.info("🛑 Stop loss diario activado")
+            logger.info(f"🛑 Stop loss: {self.state['today_losses']}/{CONFIG['stop_loss_day']}")
             return False
         
         if self.state["last_trade_time"]:
             last = datetime.fromisoformat(self.state["last_trade_time"])
             hours_since = (datetime.now(timezone.utc) - last).total_seconds() / 3600
             if hours_since < CONFIG["cooldown_hours"]:
-                logger.info(f"⏳ Cooldown: espera {CONFIG['cooldown_hours']-hours_since:.1f}h")
+                logger.info(f"⏳ Cooldown: {CONFIG['cooldown_hours']-hours_since:.1f}h")
                 return False
         
         available = self.state["cash"] - self.state["exposed"]
@@ -782,13 +781,23 @@ class SurvivalBot:
         print(f"🎯 Hoy: {self.state['today_wins']}W/{self.state['today_losses']}L ({today_wr:.1f}%)")
         print(f"💼 Exposed: ${self.state['exposed']:.2f} | P&L: ${self.state['lifetime_pnl']:+.2f}")
         print(f"📉 Max Drawdown: ${self.state['max_drawdown']:.2f}")
+        print(f"🎲 Trades hoy: {self.state['today_trades']}/{CONFIG['absolute_max_day']}")
         
-        if self.state["cash"] < 20:
-            print("🚨 CRÍTICO: Cash < $20")
-        if wr < 55 and self.state["total_trades"] > 10:
-            print("🚨 ESTRATEGIA FALLIDA: WR < 55%")
+        if self.state["cash"] < 15:  # ← ALERTA MÁS TEMPRANA
+            print("🚨 CRÍTICO: Cash < $15")
+        elif self.state["cash"] < 20:
+            print("⚠️  ALERTA: Cash < $20")
+        
+        if wr < 50 and self.state["total_trades"] > 10:  # ← MÁS PERMISIVO
+            print("🚨 ESTRATEGIA FALLIDA: WR < 50%")
+        elif wr < 55 and self.state["total_trades"] > 15:
+            print("⚠️  CUIDADO: WR < 55%")
+        
+        if wr > 60 and self.state["total_trades"] > 15:  # ← MÁS PERMISIVO
+            print("✅ BUENO: WR > 60%")
         if wr > 65 and self.state["total_trades"] > 20:
-            print("✅ LISTO PARA ESCALAR: Añade fondos hasta $100")
+            print("✅✅ LISTO PARA $100")
+        
         print("="*60)
     
     def run(self):
@@ -810,15 +819,16 @@ class SurvivalBot:
             return
         
         logger.info(f"🎯 {len(signals)} señales con edge > {CONFIG['min_edge']:.0%}")
-        logger.info(f"   Mejor: {signals[0]['city']} {signals[0]['outcome'][:30]}... "
-                   f"@ {signals[0]['price']:.0%} (edge: {signals[0]['edge']:.1%})")
+        if len(signals) > 0:
+            logger.info(f"   Top: {signals[0]['city']} {signals[0]['outcome'][:25]}... "
+                       f"@ {signals[0]['price']:.0%} (edge: {signals[0]['edge']:.1%})")
         
         # 4. Ejecutar mejor señal
         best = signals[0]
         stake = self.calculate_position_size(best["edge"], best["forecast"]["providers"])
         
         if stake <= 0:
-            logger.info("⚠️ Stake calculado: $0 (condiciones no cumplen)")
+            logger.info("⚠️ Stake: $0 (condiciones no cumplen)")
             self.daily_report()
             return
         
@@ -860,8 +870,8 @@ if __name__ == "__main__":
         run_single_cycle()
     else:
         # Modo scheduler
-        logger.info("🤖 MODO SCHEDULER - Ejecutando cada hora")
-        logger.info(f"   Intervalo: {CONFIG['run_interval_seconds']} segundos")
+        logger.info("🤖 MODO SCHEDULER - Testing agresivo")
+        logger.info(f"   Intervalo: {CONFIG['run_interval_seconds']/60:.0f} minutos")
         logger.info("   Presiona Ctrl+C para detener")
         
         start_time = time.time()
@@ -881,5 +891,5 @@ if __name__ == "__main__":
                 logger.info("⏰ Tiempo máximo alcanzado. Reiniciar manualmente.")
                 break
             
-            logger.info(f"😴 Durmiendo {CONFIG['run_interval_seconds']/3600:.1f}h...")
+            logger.info(f"😴 Durmiendo {CONFIG['run_interval_seconds']/60:.0f} min...")
             time.sleep(CONFIG["run_interval_seconds"])
